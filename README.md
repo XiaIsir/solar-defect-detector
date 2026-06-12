@@ -2,8 +2,6 @@
 
 基于改进 YOLOv11n (FAF / L-FAF) 算法的太阳能电池板表面缺陷检测软件，配备 PyQt5 图形界面，支持图像、视频、摄像头实时检测。
 
-> 论文参考：*基于改进 YOLOv11n 算法的太阳能电池板缺陷检测技术研究*（王逸凡，2025）
-
 ---
 
 ## 缺陷类型
@@ -157,4 +155,3 @@ pyinstaller solar-defect-detector.spec
 - **图像处理**: OpenCV
 - **GUI 框架**: PyQt5
 - **打包部署**: PyInstaller
-- **AI 辅助开发**: Claude Code
