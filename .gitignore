@@ -182,6 +182,9 @@ pnnx*
 # calibration image
 calibration_*.npy
 
+# Claude Code local config
+.claude/
+
 # Videos and Pictures
 *.mp4
 *.avi
