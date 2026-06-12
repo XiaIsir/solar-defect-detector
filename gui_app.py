@@ -19,33 +19,54 @@ Features per paper §5.4:
 Usage:
     python gui_app.py
 """
-import sys
-import time
-import json
+
+from __future__ import annotations
+
 import csv
 import gc
 import hashlib
-import cv2
-import numpy as np
-from pathlib import Path
+import json
+import sys
+import time
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
 
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QLabel, QPushButton,
-    QVBoxLayout, QHBoxLayout, QGridLayout, QFileDialog, QMessageBox,
-    QStatusBar, QGroupBox, QSlider, QScrollArea, QFrame,
-    QProgressBar, QTableWidget, QTableWidgetItem, QHeaderView,
-    QDialog, QLineEdit, QTabWidget, QComboBox, QListWidget,
-    QListWidgetItem, QSplitter, QAbstractItemView,
-)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize
-from PyQt5.QtGui import QFont, QImage, QPixmap, QIcon, QColor
-from PyQt5.QtWidgets import QSizePolicy
-
+import cv2
+import numpy as np
 import torch
-from ultralytics import YOLO
+from PyQt5.QtCore import QSize, Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QIcon, QPixmap
+from PyQt5.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSlider,
+    QSplitter,
+    QStatusBar,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
+from ultralytics import YOLO
 
 # ===========================================================================
 # Constants
@@ -94,7 +115,7 @@ class UserManager:
     @staticmethod
     def _load():
         if USERS_FILE.exists():
-            with open(USERS_FILE, "r", encoding="utf-8") as f:
+            with open(USERS_FILE, encoding="utf-8") as f:
                 return json.load(f)
         return {}
 
@@ -129,6 +150,7 @@ class UserManager:
 # ===========================================================================
 class LoginDialog(QDialog):
     """Login dialog matching paper Fig 5.1 / 5.2."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("用户登录 — solar-defect-detector")
@@ -229,11 +251,13 @@ class LoginDialog(QDialog):
 def _prep_none(img):
     return img
 
+
 def _prep_clahe(img):
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
     l = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(l)
     return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+
 
 def _prep_histeq(img):
     ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
@@ -241,16 +265,19 @@ def _prep_histeq(img):
     y = cv2.equalizeHist(y)
     return cv2.cvtColor(cv2.merge([y, cr, cb]), cv2.COLOR_YCrCb2BGR)
 
+
 def _prep_sharpen(img):
     kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]], dtype=np.float32)
     return cv2.filter2D(img, -1, kernel)
 
+
 def _prep_denoise(img):
-    return cv2.fastNlMeansDenoisingColored(img, None, h=10, hColor=10,
-                                           templateWindowSize=7, searchWindowSize=21)
+    return cv2.fastNlMeansDenoisingColored(img, None, h=10, hColor=10, templateWindowSize=7, searchWindowSize=21)
+
 
 def _prep_bilateral(img):
     return cv2.bilateralFilter(img, d=9, sigmaColor=75, sigmaSpace=75)
+
 
 def _prep_gamma(img, gamma=1.5):
     lut = np.array([((i / 255.0) ** gamma) * 255 for i in range(256)], dtype=np.uint8)
@@ -259,21 +286,20 @@ def _prep_gamma(img, gamma=1.5):
 
 # key → (UI标签, 处理函数) — 单一数据源，UI 与逻辑通过此字典保持同步
 PREPROCESS_MAP = {
-    "none":      ("无  |  None",           _prep_none),
-    "clahe":     ("CLAHE 自适应直方图",      _prep_clahe),
-    "histeq":    ("直方图均衡化",            _prep_histeq),
-    "sharpen":   ("锐化  |  Sharpen",      _prep_sharpen),
-    "denoise":   ("降噪  |  Denoise",      _prep_denoise),
-    "gamma":     ("Gamma 校正",            _prep_gamma),
+    "none": ("无  |  None", _prep_none),
+    "clahe": ("CLAHE 自适应直方图", _prep_clahe),
+    "histeq": ("直方图均衡化", _prep_histeq),
+    "sharpen": ("锐化  |  Sharpen", _prep_sharpen),
+    "denoise": ("降噪  |  Denoise", _prep_denoise),
+    "gamma": ("Gamma 校正", _prep_gamma),
     "bilateral": ("双边滤波  |  Bilateral", _prep_bilateral),
 }
 
 
 def apply_preprocess(img_bgr: np.ndarray, method: str) -> np.ndarray:
-    """通过预处理映射表分发，不再使用 if/elif 硬编码。
+    """通过预处理映射表分发，不再使用 if/elif 硬编码。.
 
-    所有对比度增强方法仅操作亮度通道（LAB-L 或 YCrCb-Y），
-    避免灰度转换导致的色度信息丢失和训练/推理域差异。
+    所有对比度增强方法仅操作亮度通道（LAB-L 或 YCrCb-Y）， 避免灰度转换导致的色度信息丢失和训练/推理域差异。
     """
     entry = PREPROCESS_MAP.get(method)
     if entry is None:
@@ -292,14 +318,13 @@ class Detector:
         """Auto-detect the best available torch device."""
         if torch.cuda.is_available():
             return "cuda:0"
-        if hasattr(torch, 'xpu') and torch.xpu.is_available():
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
             return "xpu:0"
-        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             return "mps"
         return "cpu"
 
-    def __init__(self, model_path: str = None, device: str = None,
-                 conf_threshold: float = 0.5):
+    def __init__(self, model_path: str | None = None, device: str | None = None, conf_threshold: float = 0.5):
         self.model = None
         self.model_path = None
         self.device = device or self._detect_device()
@@ -314,9 +339,9 @@ class Detector:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         self.model_path = str(model_path)
-        self.model = YOLO(self.model_path, task='detect')
+        self.model = YOLO(self.model_path, task="detect")
         # Warm-up: move model to target device so first real inference isn't
-        # penalised by CPU→GPU transfer.
+        # penalized by CPU→GPU transfer.
         try:
             self.model.model.eval().to(self.device)
         except Exception:
@@ -359,8 +384,7 @@ class Detector:
         processed = apply_preprocess(original, preprocess)
 
         t0 = time.perf_counter()
-        results = self.model(processed, device=self.device, verbose=False,
-                             conf=self.conf_threshold)
+        results = self.model(processed, device=self.device, verbose=False, conf=self.conf_threshold)
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
         annotated, counts, boxes_detail = self._draw_boxes(original.copy(), results[0])
@@ -390,19 +414,28 @@ class Detector:
             label = f"{class_name} {conf:.2f}"
             font_scale = 1.0
             thickness = 2
-            (tw, th), baseline = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
-            cv2.rectangle(img, (x1, y1 - th - baseline - 6),
-                          (x1 + tw + 8, y1), color, -1)
-            cv2.putText(img, label, (x1 + 4, y1 - baseline - 2),
-                        cv2.FONT_HERSHEY_SIMPLEX, font_scale,
-                        (255, 255, 255), thickness)
+            (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+            cv2.rectangle(img, (x1, y1 - th - baseline - 6), (x1 + tw + 8, y1), color, -1)
+            cv2.putText(
+                img,
+                label,
+                (x1 + 4, y1 - baseline - 2),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                (255, 255, 255),
+                thickness,
+            )
 
-            boxes_detail.append({
-                "class": class_name,
-                "confidence": float(conf),
-                "x1": x1, "y1": y1, "x2": x2, "y2": y2,
-            })
+            boxes_detail.append(
+                {
+                    "class": class_name,
+                    "confidence": float(conf),
+                    "x1": x1,
+                    "y1": y1,
+                    "x2": x2,
+                    "y2": y2,
+                }
+            )
         return img, dict(counts), boxes_detail
 
 
@@ -411,6 +444,7 @@ class Detector:
 # ===========================================================================
 class DetectionWorker(QThread):
     """Single-image detection in background thread. Supports cancel."""
+
     detection_done = pyqtSignal(np.ndarray, np.ndarray, dict, float, list)
     error_occurred = pyqtSignal(str)
 
@@ -428,8 +462,9 @@ class DetectionWorker(QThread):
         try:
             if self._cancelled:
                 return
-            original, annotated, counts, elapsed_ms, boxes_detail = \
-                self.detector.detect(self.image_path, self.preprocess)
+            original, annotated, counts, elapsed_ms, boxes_detail = self.detector.detect(
+                self.image_path, self.preprocess
+            )
             if not self._cancelled:
                 self.detection_done.emit(original, annotated, counts, elapsed_ms, boxes_detail)
         except Exception as e:
@@ -439,6 +474,7 @@ class DetectionWorker(QThread):
 
 class VideoWorker(QThread):
     """Video file detection — paper §5.4.2 视频检测."""
+
     frame_ready = pyqtSignal(np.ndarray, np.ndarray, dict, float, list, int, int)
     video_done = pyqtSignal()
     error_occurred = pyqtSignal(str)
@@ -449,7 +485,7 @@ class VideoWorker(QThread):
         self.video_path = video_path
         self.preprocess = preprocess
         self._cancelled = False
-        self._cap = None          # keep reference for immediate release on cancel
+        self._cap = None  # keep reference for immediate release on cancel
         self._cap_released = False
 
     def cancel(self):
@@ -476,12 +512,11 @@ class VideoWorker(QThread):
                 if not ret:
                     break
                 try:
-                    _, annotated, counts, elapsed_ms, boxes_detail = \
-                        self.detector.detect(frame, self.preprocess)
+                    _, annotated, counts, elapsed_ms, boxes_detail = self.detector.detect(frame, self.preprocess)
                     if not self._cancelled:
                         self.frame_ready.emit(
-                            frame, annotated, counts, elapsed_ms, boxes_detail,
-                            frame_idx, total_frames)
+                            frame, annotated, counts, elapsed_ms, boxes_detail, frame_idx, total_frames
+                        )
                 except Exception as e:
                     if not self._cancelled:
                         self.error_occurred.emit(f"Frame {frame_idx}: {e}")
@@ -505,12 +540,13 @@ class CameraWorker(QThread):
     - Cancel: immediate cap.release() via cancel(block=True)
     - Adaptive pacing so detection time doesn't stack frames
     """
+
     frame_ready = pyqtSignal(np.ndarray, np.ndarray, dict, float, list)
     error_occurred = pyqtSignal(str)
     camera_opened = pyqtSignal(int, int)  # actual_width, actual_height
 
-    _HEARTBEAT_LIMIT = 50        # 50 frames = ~2.5 s of continuous failure
-    _TARGET_FPS = 25             # cap render rate to keep UI responsive
+    _HEARTBEAT_LIMIT = 50  # 50 frames = ~2.5 s of continuous failure
+    _TARGET_FPS = 25  # cap render rate to keep UI responsive
 
     def __init__(self, detector: Detector, camera_id: int = 0, preprocess: str = "none"):
         super().__init__()
@@ -555,7 +591,8 @@ class CameraWorker(QThread):
                     consecutive_failures += 1
                     if consecutive_failures >= self._HEARTBEAT_LIMIT:
                         self.error_occurred.emit(
-                            f"摄像头 Camera {self.camera_id} 已断开连接（连续 {self._HEARTBEAT_LIMIT} 帧读取失败），请检查设备。")
+                            f"摄像头 Camera {self.camera_id} 已断开连接（连续 {self._HEARTBEAT_LIMIT} 帧读取失败），请检查设备。"
+                        )
                         break
                     self.msleep(20)
                     continue
@@ -564,10 +601,10 @@ class CameraWorker(QThread):
                     first_frame = False
                     if frame.max() < 20:
                         self.error_occurred.emit(
-                            f"摄像头 Camera {self.camera_id} 画面全黑 — 请检查镜头盖或隐私快门是否关闭")
+                            f"摄像头 Camera {self.camera_id} 画面全黑 — 请检查镜头盖或隐私快门是否关闭"
+                        )
                 try:
-                    _, annotated, counts, elapsed_ms, boxes_detail = \
-                        self.detector.detect(frame, self.preprocess)
+                    _, annotated, counts, elapsed_ms, boxes_detail = self.detector.detect(frame, self.preprocess)
                     if not self._cancelled:
                         self.frame_ready.emit(frame, annotated, counts, elapsed_ms, boxes_detail)
                 except Exception as e:
@@ -588,6 +625,7 @@ class CameraWorker(QThread):
 
 class BatchWorker(QThread):
     """Folder batch detection."""
+
     progress = pyqtSignal(int, int, str)
     image_done = pyqtSignal(str, dict, float)
     batch_finished = pyqtSignal(dict)
@@ -605,10 +643,7 @@ class BatchWorker(QThread):
 
     def run(self):
         folder = Path(self.folder_path)
-        image_files = sorted(
-            [f for f in folder.iterdir()
-             if f.suffix.lower() in IMAGE_EXTS and f.is_file()]
-        )
+        image_files = sorted([f for f in folder.iterdir() if f.suffix.lower() in IMAGE_EXTS and f.is_file()])
         if not image_files:
             self.error_occurred.emit("文件夹中没有图像文件。")
             return
@@ -625,8 +660,7 @@ class BatchWorker(QThread):
                 break
             self.progress.emit(idx + 1, total, img_path.name)
             try:
-                _, annotated, counts, elapsed_ms, _ = \
-                    self.detector.detect(str(img_path), self.preprocess)
+                _, annotated, counts, elapsed_ms, _ = self.detector.detect(str(img_path), self.preprocess)
                 out_name = f"{img_path.stem}_detected{img_path.suffix}"
                 cv2.imwrite(str(out_dir / out_name), annotated)
                 self.image_done.emit(img_path.name, counts, elapsed_ms)
@@ -768,10 +802,8 @@ class ZoomableImageLabel(QLabel):
             self._drag_global = event.globalPos()
             sa = self._scroll_area()
             if sa:
-                sa.horizontalScrollBar().setValue(
-                    sa.horizontalScrollBar().value() - delta.x())
-                sa.verticalScrollBar().setValue(
-                    sa.verticalScrollBar().value() - delta.y())
+                sa.horizontalScrollBar().setValue(sa.horizontalScrollBar().value() - delta.x())
+                sa.verticalScrollBar().setValue(sa.verticalScrollBar().value() - delta.y())
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -795,6 +827,7 @@ class ZoomableImageLabel(QLabel):
 # ===========================================================================
 class DragDropListWidget(QListWidget):
     """QListWidget that accepts drag-and-drop of folders from the filesystem."""
+
     folder_dropped = pyqtSignal(str)
 
     def __init__(self, parent=None):
@@ -843,7 +876,7 @@ class MainWindow(QMainWindow):
 
     @classmethod
     def _resolve_candidate(cls, rel: str) -> Path:
-        """优先在 bundle 内查找，其次搜索运行目录下类似路径。"""
+        """优先在 bundle 内查找，其次搜索运行目录下类似路径。."""
         bundled = cls._bundle_dir() / rel
         if bundled.exists():
             return bundled
@@ -929,8 +962,8 @@ class MainWindow(QMainWindow):
         self.image_splitter = QSplitter(Qt.Horizontal)
         self.image_splitter.setHandleWidth(3)
         self.image_splitter.setStyleSheet(
-            "QSplitter::handle { background-color: #444; }"
-            "QSplitter::handle:hover { background-color: #4A90E2; }")
+            "QSplitter::handle { background-color: #444; }QSplitter::handle:hover { background-color: #4A90E2; }"
+        )
 
         # Left — Original image group
         left_grp = QGroupBox("原始图像  |  Original Image")
@@ -941,8 +974,7 @@ class MainWindow(QMainWindow):
         self.scroll_original = QScrollArea()
         self.scroll_original.setWidgetResizable(True)
         self.scroll_original.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.scroll_original.setStyleSheet(
-            "QScrollArea { background-color: #1a1a1a; border: 2px dashed #444; }")
+        self.scroll_original.setStyleSheet("QScrollArea { background-color: #1a1a1a; border: 2px dashed #444; }")
         self.lbl_original = ZoomableImageLabel()
         self.lbl_original.setText("未加载图像\nNo image loaded")
         self.lbl_original.setStyleSheet("color: #777; font-size: 18px;")
@@ -959,8 +991,8 @@ class MainWindow(QMainWindow):
         self.right_splitter = QSplitter(Qt.Vertical)
         self.right_splitter.setHandleWidth(3)
         self.right_splitter.setStyleSheet(
-            "QSplitter::handle { background-color: #444; }"
-            "QSplitter::handle:hover { background-color: #4A90E2; }")
+            "QSplitter::handle { background-color: #444; }QSplitter::handle:hover { background-color: #4A90E2; }"
+        )
 
         # Result image group
         right_grp = QGroupBox("检测结果  |  Detection Result")
@@ -971,8 +1003,7 @@ class MainWindow(QMainWindow):
         self.scroll_result = QScrollArea()
         self.scroll_result.setWidgetResizable(True)
         self.scroll_result.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.scroll_result.setStyleSheet(
-            "QScrollArea { background-color: #1a1a1a; border: 2px dashed #444; }")
+        self.scroll_result.setStyleSheet("QScrollArea { background-color: #1a1a1a; border: 2px dashed #444; }")
         self.lbl_result = ZoomableImageLabel()
         self.lbl_result.setText("检测结果将显示在此处\nResult will appear here")
         self.lbl_result.setStyleSheet("color: #777; font-size: 18px;")
@@ -992,8 +1023,7 @@ class MainWindow(QMainWindow):
         tv = QVBoxLayout(table_grp)
         tv.setContentsMargins(4, 20, 4, 4)
         self.results_table = QTableWidget(0, 6)
-        self.results_table.setHorizontalHeaderLabels(
-            ["类别 Class", "置信度 Conf", "X1", "Y1", "X2", "Y2"])
+        self.results_table.setHorizontalHeaderLabels(["类别 Class", "置信度 Conf", "X1", "Y1", "X2", "Y2"])
         self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -1031,8 +1061,7 @@ class MainWindow(QMainWindow):
         bottom_row.addWidget(self.summary_group, stretch=1)
 
         self.perf_frame = QFrame()
-        self.perf_frame.setStyleSheet(
-            "QFrame { background-color: #1e1e1e; border-radius: 4px; padding: 6px; }")
+        self.perf_frame.setStyleSheet("QFrame { background-color: #1e1e1e; border-radius: 4px; padding: 6px; }")
         perf_layout = QVBoxLayout(self.perf_frame)
         self.lbl_inference_time = QLabel("Inference: — ms")
         self.lbl_inference_time.setStyleSheet("color: #888; font-size: 14px; font-weight: bold;")
@@ -1097,8 +1126,7 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QWidget:
         """Left sidebar with mode buttons, file browser, preprocess options."""
         sidebar = QFrame()
-        sidebar.setStyleSheet(
-            "QFrame { background-color: #1e1e1e; border-radius: 6px; padding: 4px; }")
+        sidebar.setStyleSheet("QFrame { background-color: #1e1e1e; border-radius: 6px; padding: 4px; }")
         layout = QVBoxLayout(sidebar)
         layout.setSpacing(8)
         layout.setContentsMargins(8, 12, 8, 12)
@@ -1142,7 +1170,8 @@ class MainWindow(QMainWindow):
             "QComboBox { font-size: 13px; padding: 4px; background: #2b2b2b; "
             "color: #ccc; border: 1px solid #444; border-radius: 3px; }"
             "QComboBox::drop-down { border: none; }"
-            "QComboBox QAbstractItemView { background: #2b2b2b; color: #ccc; }")
+            "QComboBox QAbstractItemView { background: #2b2b2b; color: #ccc; }"
+        )
         self.combo_camera.currentIndexChanged.connect(self._on_camera_changed)
         # 阻断信号，避免 addItem 触发 _on_camera_changed 时
         # self.status_bar 尚未创建导致 AttributeError 闪退
@@ -1163,7 +1192,8 @@ class MainWindow(QMainWindow):
             "QComboBox { font-size: 13px; padding: 4px; background: #2b2b2b; "
             "color: #ccc; border: 1px solid #444; border-radius: 3px; }"
             "QComboBox::drop-down { border: none; }"
-            "QComboBox QAbstractItemView { background: #2b2b2b; color: #ccc; }")
+            "QComboBox QAbstractItemView { background: #2b2b2b; color: #ccc; }"
+        )
         prep_layout.addWidget(self.combo_preprocess)
         layout.addWidget(prep_grp)
 
@@ -1184,7 +1214,8 @@ class MainWindow(QMainWindow):
             "QListWidget { background-color: #1a1a1a; color: #ccc; font-size: 12px; "
             "border: 1px solid #333; }"
             "QListWidget::item:selected { background-color: #4A90E2; }"
-            "QListWidget::item:hover { background-color: #333; }")
+            "QListWidget::item:hover { background-color: #333; }"
+        )
         self.file_list.itemClicked.connect(self._on_file_selected)
         self.file_list.folder_dropped.connect(self._on_folder_dropped)
         self.file_list.setIconSize(QSize(48, 48))
@@ -1199,11 +1230,13 @@ class MainWindow(QMainWindow):
             return (
                 "QPushButton { font-size: 14px; font-weight: bold; padding: 6px 12px; "
                 "background-color: #4A90E2; color: #fff; border-radius: 3px; }"
-                "QPushButton:hover { background-color: #5BA0F2; }")
+                "QPushButton:hover { background-color: #5BA0F2; }"
+            )
         return (
             "QPushButton { font-size: 14px; font-weight: bold; padding: 6px 12px; "
             "background-color: #2b2b2b; color: #888; border: 1px solid #444; border-radius: 3px; }"
-            "QPushButton:hover { background-color: #333; color: #ccc; }")
+            "QPushButton:hover { background-color: #333; color: #ccc; }"
+        )
 
     def _build_status_bar(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -1211,20 +1244,21 @@ class MainWindow(QMainWindow):
         self.lbl_model_status = QLabel("● 模型: 未加载  |  Model: Not Loaded")
         self.lbl_model_status.setStyleSheet(
             "color: #E74C3C; font-size: 15px; font-weight: bold;"
-            "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;")
+            "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;"
+        )
         row.addWidget(self.lbl_model_status)
         self.lbl_device = QLabel("● 设备: CPU")
         self.lbl_device.setStyleSheet(
             "color: #F39C12; font-size: 15px; font-weight: bold;"
-            "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;")
+            "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;"
+        )
         row.addWidget(self.lbl_device)
         row.addStretch()
         return row
 
     def _build_conf_slider(self) -> QWidget:
         container = QFrame()
-        container.setStyleSheet(
-            "QFrame { background-color: #1e1e1e; border-radius: 4px; padding: 6px; }")
+        container.setStyleSheet("QFrame { background-color: #1e1e1e; border-radius: 4px; padding: 6px; }")
         layout = QHBoxLayout(container)
         layout.setContentsMargins(12, 6, 12, 6)
         lbl = QLabel("置信度阈值  |  Confidence:")
@@ -1243,8 +1277,7 @@ class MainWindow(QMainWindow):
         self.conf_slider.valueChanged.connect(self._on_conf_changed)
         layout.addWidget(self.conf_slider)
         self.lbl_conf_value = QLabel("0.50")
-        self.lbl_conf_value.setStyleSheet(
-            "color: #4A90E2; font-size: 18px; font-weight: bold; min-width: 50px;")
+        self.lbl_conf_value.setStyleSheet("color: #4A90E2; font-size: 18px; font-weight: bold; min-width: 50px;")
         self.lbl_conf_value.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.lbl_conf_value)
         layout.addStretch()
@@ -1332,7 +1365,8 @@ class MainWindow(QMainWindow):
         self.detect_progress.setVisible(False)
         self.detect_progress.setStyleSheet(
             "QProgressBar { background: #2b2b2b; border: 1px solid #444; border-radius: 3px; }"
-            "QProgressBar::chunk { background: #27AE60; }")
+            "QProgressBar::chunk { background: #27AE60; }"
+        )
         row.addWidget(self.detect_progress)
 
         return row
@@ -1368,9 +1402,7 @@ class MainWindow(QMainWindow):
     # Mode switching (paper: 图片检测/视频检测/摄像头检测)
     # =========================================================================
     def _scan_cameras(self):
-        """懒加载扫描可用摄像头索引 0..7，填充下拉框。
-        仅在用户进入摄像头模式时调用，不在启动时触发。
-        依次尝试 DirectShow → MSMF → 默认后端，单个设备失败不影响整体扫描。
+        """懒加载扫描可用摄像头索引 0..7，填充下拉框。 仅在用户进入摄像头模式时调用，不在启动时触发。 依次尝试 DirectShow → MSMF → 默认后端，单个设备失败不影响整体扫描。.
         """
         current = self.combo_camera.currentData() if self.combo_camera.count() > 0 else None
         self.combo_camera.blockSignals(True)
@@ -1378,13 +1410,12 @@ class MainWindow(QMainWindow):
 
         backends = [
             ("DSHOW", cv2.CAP_DSHOW),
-            ("MSMF",  cv2.CAP_MSMF),
-            ("ANY",   cv2.CAP_ANY),
+            ("MSMF", cv2.CAP_MSMF),
+            ("ANY", cv2.CAP_ANY),
         ]
         seen = set()
 
         for idx in range(8):
-            opened = False
             for name, api in backends:
                 cap = None
                 try:
@@ -1398,7 +1429,6 @@ class MainWindow(QMainWindow):
                             if idx not in seen:
                                 self.combo_camera.addItem(label, idx)
                                 seen.add(idx)
-                            opened = True
                             break
                 except Exception:
                     pass  # 单个摄像头异常不影响后续扫描
@@ -1427,9 +1457,11 @@ class MainWindow(QMainWindow):
     def _switch_mode(self, mode: str):
         self._stop_all_workers()
         self._mode = mode
-        for btn, m in [(self.btn_mode_image, "image"),
-                       (self.btn_mode_video, "video"),
-                       (self.btn_mode_camera, "camera")]:
+        for btn, m in [
+            (self.btn_mode_image, "image"),
+            (self.btn_mode_video, "video"),
+            (self.btn_mode_camera, "camera"),
+        ]:
             btn.setChecked(m == mode)
             btn.setStyleSheet(self._sidebar_btn_style(m == mode))
 
@@ -1458,15 +1490,14 @@ class MainWindow(QMainWindow):
     # File browser (paper §5.4.3)
     # =========================================================================
     def _on_browse_folder(self):
-        folder = QFileDialog.getExistingDirectory(
-            self, "选择图像文件夹  |  Select Image Folder", "")
+        folder = QFileDialog.getExistingDirectory(self, "选择图像文件夹  |  Select Image Folder", "")
         if not folder:
             return
         self._current_browse_dir = Path(folder)
         self.file_list.clear()
         image_files = sorted(
-            [f for f in self._current_browse_dir.iterdir()
-             if f.suffix.lower() in IMAGE_EXTS and f.is_file()])
+            [f for f in self._current_browse_dir.iterdir() if f.suffix.lower() in IMAGE_EXTS and f.is_file()]
+        )
         for f in image_files:
             item = QListWidgetItem(f.name)
             item.setData(Qt.UserRole, str(f))
@@ -1476,16 +1507,15 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             self.file_list.addItem(item)
-        self.status_bar.showMessage(
-            f"已浏览: {folder}  ({len(image_files)} 张图像)  |  {len(image_files)} images")
+        self.status_bar.showMessage(f"已浏览: {folder}  ({len(image_files)} 张图像)  |  {len(image_files)} images")
 
     def _on_folder_dropped(self, folder: str):
         """Handle drag-and-drop of a folder onto the file browser."""
         self._current_browse_dir = Path(folder)
         self.file_list.clear()
         image_files = sorted(
-            [f for f in self._current_browse_dir.iterdir()
-             if f.suffix.lower() in IMAGE_EXTS and f.is_file()])
+            [f for f in self._current_browse_dir.iterdir() if f.suffix.lower() in IMAGE_EXTS and f.is_file()]
+        )
         for f in image_files:
             item = QListWidgetItem(f.name)
             item.setData(Qt.UserRole, str(f))
@@ -1495,8 +1525,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             self.file_list.addItem(item)
-        self.status_bar.showMessage(
-            f"已拖入: {folder}  ({len(image_files)} 张图像)  |  {len(image_files)} images")
+        self.status_bar.showMessage(f"已拖入: {folder}  ({len(image_files)} 张图像)  |  {len(image_files)} images")
 
     def _on_file_selected(self, item: QListWidgetItem):
         path = item.data(Qt.UserRole)
@@ -1520,8 +1549,7 @@ class MainWindow(QMainWindow):
         self.lbl_result.setStyleSheet("color: #777; font-size: 18px;")
         self.lbl_zoom_orig.setText("100%")
         self.lbl_zoom_res.setText("100%")
-        self.status_bar.showMessage(
-            f"已加载: {Path(path).name}  ({img.shape[1]}×{img.shape[0]})")
+        self.status_bar.showMessage(f"已加载: {Path(path).name}  ({img.shape[1]}×{img.shape[0]})")
         self._update_ui_state()
 
     # =========================================================================
@@ -1555,8 +1583,7 @@ class MainWindow(QMainWindow):
                 if not any(p == c[0] for c in candidates):
                     candidates.insert(0, (p, p.stat().st_mtime, p.stat().st_size))
         if not candidates:
-            self.status_bar.showMessage(
-                "自动加载失败: 未找到任何 best.pt — 请手动加载模型")
+            self.status_bar.showMessage("自动加载失败: 未找到任何 best.pt — 请手动加载模型")
             self._update_model_status(False)
             return
         errors = []
@@ -1569,8 +1596,7 @@ class MainWindow(QMainWindow):
                     rel_str = str(path.relative_to(Path.cwd()))
                 except ValueError:
                     rel_str = str(path)
-                self.status_bar.showMessage(
-                    f"已加载模型: {rel_str}  ({size / 1e6:.1f} MB)")
+                self.status_bar.showMessage(f"已加载模型: {rel_str}  ({size / 1e6:.1f} MB)")
                 self._update_ui_state()
                 return
             except Exception as e:
@@ -1578,9 +1604,7 @@ class MainWindow(QMainWindow):
                 continue
         self._update_model_status(False)
         detail = "\n".join(errors) if errors else "(unknown)"
-        QMessageBox.warning(
-            self, "模型加载失败",
-            f"尝试了 {len(candidates)} 个 checkpoint，全部失败:\n\n{detail}")
+        QMessageBox.warning(self, "模型加载失败", f"尝试了 {len(candidates)} 个 checkpoint，全部失败:\n\n{detail}")
 
     def _try_auto_browse_val(self):
         """Auto-load the default val folder if it exists on disk."""
@@ -1588,9 +1612,7 @@ class MainWindow(QMainWindow):
         if default_val.is_dir():
             self._current_browse_dir = default_val
             self.file_list.clear()
-            image_files = sorted(
-                [f for f in default_val.iterdir()
-                 if f.suffix.lower() in IMAGE_EXTS and f.is_file()])
+            image_files = sorted([f for f in default_val.iterdir() if f.suffix.lower() in IMAGE_EXTS and f.is_file()])
             for f in image_files:
                 item = QListWidgetItem(f.name)
                 item.setData(Qt.UserRole, str(f))
@@ -1602,7 +1624,8 @@ class MainWindow(QMainWindow):
                 self.file_list.addItem(item)
             self.status_bar.showMessage(
                 f"已自动加载验证集: {default_val}  ({len(image_files)} 张)  |  "
-                f"Auto-loaded val set: {len(image_files)} images")
+                f"Auto-loaded val set: {len(image_files)} images"
+            )
 
     # =========================================================================
     # Conversion helpers
@@ -1611,7 +1634,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _cv_to_qpixmap(cv_bgr, target_w=None, target_h=None):
         rgb = cv2.cvtColor(cv_bgr, cv2.COLOR_BGR2RGB)
-        ok, buf = cv2.imencode('.png', rgb)
+        _ok, buf = cv2.imencode(".png", rgb)
         pix = QPixmap()
         pix.loadFromData(buf.tobytes())
         if target_w and target_h:
@@ -1631,12 +1654,14 @@ class MainWindow(QMainWindow):
             self.lbl_model_status.setText(f"● 模型: {name} 已加载")
             self.lbl_model_status.setStyleSheet(
                 "color: #27AE60; font-size: 15px; font-weight: bold;"
-                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;")
+                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;"
+            )
         else:
             self.lbl_model_status.setText("● 模型: 未加载")
             self.lbl_model_status.setStyleSheet(
                 "color: #E74C3C; font-size: 15px; font-weight: bold;"
-                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;")
+                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;"
+            )
 
     def _update_device_status(self):
         device = self.detector.device
@@ -1644,27 +1669,32 @@ class MainWindow(QMainWindow):
             self.lbl_device.setText("● 设备: CPU")
             self.lbl_device.setStyleSheet(
                 "color: #F39C12; font-size: 15px; font-weight: bold;"
-                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;")
+                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;"
+            )
         elif device.startswith("cuda"):
             self.lbl_device.setText(f"● 设备: NVIDIA GPU  |  {device}")
             self.lbl_device.setStyleSheet(
                 "color: #27AE60; font-size: 15px; font-weight: bold;"
-                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;")
+                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;"
+            )
         elif device.startswith("xpu"):
             self.lbl_device.setText(f"● 设备: Intel Arc GPU  |  {device}")
             self.lbl_device.setStyleSheet(
                 "color: #27AE60; font-size: 15px; font-weight: bold;"
-                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;")
+                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;"
+            )
         elif device == "mps":
             self.lbl_device.setText("● 设备: Apple MPS GPU")
             self.lbl_device.setStyleSheet(
                 "color: #27AE60; font-size: 15px; font-weight: bold;"
-                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;")
+                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;"
+            )
         else:
             self.lbl_device.setText(f"● 设备: {device}")
             self.lbl_device.setStyleSheet(
                 "color: #27AE60; font-size: 15px; font-weight: bold;"
-                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;")
+                "padding: 6px 14px; background-color: #1e1e1e; border-radius: 4px;"
+            )
 
     def _update_perf_stats(self, elapsed_ms: float):
         fps = 1000.0 / elapsed_ms if elapsed_ms > 0 else 0.0
@@ -1738,17 +1768,13 @@ class MainWindow(QMainWindow):
                 cn_label = CLASS_LABELS_CN.get(class_name, class_name)
                 hex_color = CLASS_COLORS_HEX.get(class_name, "#E74C3C")
                 text += (
-                    f'<div style="color:{hex_color};font-size:14px;font-weight:bold;">'
-                    f'  ● {cn_label}:  {count}'
-                    f'</div>'
+                    f'<div style="color:{hex_color};font-size:14px;font-weight:bold;">  ● {cn_label}:  {count}</div>'
                 )
             text += (
-                f'<div style="color:#fff;font-size:16px;font-weight:bold;margin-top:4px;">'
-                f'  总计 Total:  {total}'
-                f'</div>'
+                f'<div style="color:#fff;font-size:16px;font-weight:bold;margin-top:4px;">  总计 Total:  {total}</div>'
             )
         # Ensure label exists (should have been created by _reset_summary)
-        if not hasattr(self, '_summary_label') or self._summary_label is None:
+        if not hasattr(self, "_summary_label") or self._summary_label is None:
             self._reset_summary()
         self._summary_label.setText(text)
         self._summary_label.setAlignment(Qt.AlignCenter)
@@ -1769,11 +1795,20 @@ class MainWindow(QMainWindow):
     def _stop_all_workers(self):
         """Stop all running workers. Uses short timeouts to avoid blocking UI."""
         _SIGNAL_NAMES = (
-            "detection_done", "video_done", "error_occurred", "frame_ready",
-            "progress", "image_done", "batch_finished",
+            "detection_done",
+            "video_done",
+            "error_occurred",
+            "frame_ready",
+            "progress",
+            "image_done",
+            "batch_finished",
         )
-        for attr, w in [("worker", self.worker), ("video_worker", self.video_worker),
-                        ("camera_worker", self.camera_worker), ("batch_worker", self.batch_worker)]:
+        for attr, w in [
+            ("worker", self.worker),
+            ("video_worker", self.video_worker),
+            ("camera_worker", self.camera_worker),
+            ("batch_worker", self.batch_worker),
+        ]:
             if w and w.isRunning():
                 w.cancel()
                 # Short timeout: if the worker is in the middle of model inference
@@ -1816,14 +1851,14 @@ class MainWindow(QMainWindow):
         orig_name = Path(self.current_image_path).stem if self.current_image_path else "result"
         default_name = f"{ts}_{orig_name}.jpg"
         path, _ = QFileDialog.getSaveFileName(
-            self, "保存检测结果", default_name,
-            "JPEG (*.jpg);;PNG (*.png);;All Files (*)")
+            self, "保存检测结果", default_name, "JPEG (*.jpg);;PNG (*.png);;All Files (*)"
+        )
         if not path:
             return
         try:
             ok = cv2.imwrite(path, self._last_annotated)
             if not ok:
-                raise IOError(f"cv2.imwrite returned False for {path}")
+                raise OSError(f"cv2.imwrite returned False for {path}")
             self.status_bar.showMessage(f"结果已保存: {path}")
             QMessageBox.information(self, "保存成功", f"检测结果已保存至:\n{path}")
         except Exception as e:
@@ -1833,8 +1868,7 @@ class MainWindow(QMainWindow):
         if not self._last_counts or not self.current_image_path:
             QMessageBox.warning(self, "提示", "请先执行检测。")
             return
-        folder = QFileDialog.getExistingDirectory(
-            self, "选择报告保存文件夹  |  Select Report Folder", "output/reports")
+        folder = QFileDialog.getExistingDirectory(self, "选择报告保存文件夹  |  Select Report Folder", "output/reports")
         if not folder:
             return
         try:
@@ -1872,15 +1906,19 @@ class MainWindow(QMainWindow):
                 writer.writerow([])
                 writer.writerow(["类别", "置信度", "X1", "Y1", "X2", "Y2"])
                 for det in self._last_boxes_detail:
-                    writer.writerow([
-                        det["class"], f"{det['confidence']:.3f}",
-                        det["x1"], det["y1"], det["x2"], det["y2"],
-                    ])
+                    writer.writerow(
+                        [
+                            det["class"],
+                            f"{det['confidence']:.3f}",
+                            det["x1"],
+                            det["y1"],
+                            det["x2"],
+                            det["y2"],
+                        ]
+                    )
 
             self.status_bar.showMessage(f"报告已导出: {json_path.name}, {csv_path.name}")
-            QMessageBox.information(
-                self, "导出成功",
-                f"报告已保存至:\n{json_path}\n{csv_path}")
+            QMessageBox.information(self, "导出成功", f"报告已保存至:\n{json_path}\n{csv_path}")
         except PermissionError:
             QMessageBox.warning(self, "文件占用", "无法写入报告文件，请关闭占用该文件的程序后重试。")
         except Exception as e:
@@ -1932,8 +1970,10 @@ class MainWindow(QMainWindow):
         self._update_ui_state()
         status = "已取消" if stats["cancelled"] else "完成"
         avg_ms = stats["avg_time_ms"]
-        msg = (f"批量检测{status} — {stats['processed']}/{stats['total_images']} 张  |  "
-               f"缺陷: {stats['total_defects']}  |  平均: {avg_ms:.1f}ms")
+        msg = (
+            f"批量检测{status} — {stats['processed']}/{stats['total_images']} 张  |  "
+            f"缺陷: {stats['total_defects']}  |  平均: {avg_ms:.1f}ms"
+        )
         self.status_bar.showMessage(msg)
         QMessageBox.information(self, f"批量检测{status}", msg)
 
@@ -1946,8 +1986,8 @@ class MainWindow(QMainWindow):
     def _on_open_image(self):
         if self._mode == "image":
             path, _ = QFileDialog.getOpenFileName(
-                self, "选择 EL 图像", "",
-                "Images (*.jpg *.jpeg *.png *.bmp *.tiff);;All Files (*)")
+                self, "选择 EL 图像", "", "Images (*.jpg *.jpeg *.png *.bmp *.tiff);;All Files (*)"
+            )
             if not path:
                 return
             img = cv2.imread(path)
@@ -1965,14 +2005,13 @@ class MainWindow(QMainWindow):
             self.lbl_result.setStyleSheet("color: #777; font-size: 18px;")
             self.lbl_zoom_orig.setText("100%")
             self.lbl_zoom_res.setText("100%")
-            self.status_bar.showMessage(
-                f"已加载: {Path(path).name}  ({img.shape[1]}×{img.shape[0]})")
+            self.status_bar.showMessage(f"已加载: {Path(path).name}  ({img.shape[1]}×{img.shape[0]})")
             self._update_ui_state()
 
         elif self._mode == "video":
             path, _ = QFileDialog.getOpenFileName(
-                self, "选择视频文件", "",
-                "Videos (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
+                self, "选择视频文件", "", "Videos (*.mp4 *.avi *.mov *.mkv);;All Files (*)"
+            )
             if not path:
                 return
             self.video_path = path
@@ -2004,24 +2043,28 @@ class MainWindow(QMainWindow):
                     cam_list.append(f"  • Camera {cid}")
                 cam_id = self.combo_camera.currentData()
                 self.status_bar.showMessage(
-                    f"已选择 Camera {cam_id} — 共 {n} 个摄像头  |  Camera {cam_id} ({n} available)")
+                    f"已选择 Camera {cam_id} — 共 {n} 个摄像头  |  Camera {cam_id} ({n} available)"
+                )
                 # Pop open the combo dropdown so user can see cameras
                 self.combo_camera.showPopup()
                 QMessageBox.information(
-                    self, "摄像头扫描结果",
-                    f"已找到 {n} 个摄像头设备:\n\n" + "\n".join(cam_list) +
-                    f"\n\n当前选中: Camera {cam_id}\n"
-                    "可在左侧栏 Camera 下拉框中切换摄像头。")
+                    self,
+                    "摄像头扫描结果",
+                    f"已找到 {n} 个摄像头设备:\n\n" + "\n".join(cam_list) + f"\n\n当前选中: Camera {cam_id}\n"
+                    "可在左侧栏 Camera 下拉框中切换摄像头。",
+                )
             else:
                 self.status_bar.showMessage("未检测到摄像头  |  No camera found")
                 QMessageBox.warning(
-                    self, "摄像头未找到",
+                    self,
+                    "摄像头未找到",
                     "未检测到任何摄像头设备。\n\n"
                     "可能原因:\n"
                     "1. 未连接摄像头\n"
                     "2. Windows 隐私设置禁止了摄像头访问\n"
                     "   (设置 → 隐私 → 摄像头 → 允许应用访问摄像头)\n"
-                    "3. 摄像头驱动未安装")
+                    "3. 摄像头驱动未安装",
+                )
             self._update_ui_state()
 
     def _on_load_model(self):
@@ -2040,9 +2083,8 @@ class MainWindow(QMainWindow):
             else:
                 default_dir = "."
         path, _ = QFileDialog.getOpenFileName(
-            self, "选择模型文件",
-            default_dir,
-            "Model Files (*.pt *.pth *.onnx *.yaml *.yml);;All Files (*)")
+            self, "选择模型文件", default_dir, "Model Files (*.pt *.pth *.onnx *.yaml *.yml);;All Files (*)"
+        )
         if not path:
             return
         try:
@@ -2093,17 +2135,18 @@ class MainWindow(QMainWindow):
             # 懒加载：首次进入摄像头模式才扫描设备
             if self.combo_camera.count() == 0 or self.combo_camera.itemData(0) == -1:
                 self._scan_cameras()
-            cam_id = (self.combo_camera.currentData()
-                      if self.combo_camera.count() > 0 else 0)
+            cam_id = self.combo_camera.currentData() if self.combo_camera.count() > 0 else 0
             if self.combo_camera.count() == 0 or cam_id == -1:
                 QMessageBox.warning(
-                    self, "摄像头未找到",
+                    self,
+                    "摄像头未找到",
                     "未检测到任何摄像头设备。\n\n"
                     "可能原因:\n"
                     "1. 未连接摄像头\n"
                     "2. Windows 隐私设置禁止了摄像头访问\n"
                     "   (设置 → 隐私 → 摄像头 → 允许应用访问摄像头)\n"
-                    "3. 摄像头驱动未安装")
+                    "3. 摄像头驱动未安装",
+                )
                 return
             try:
                 self._set_ui_running(True)
@@ -2116,9 +2159,7 @@ class MainWindow(QMainWindow):
                 self.camera_worker.start()
             except Exception as e:
                 self._set_ui_running(False)
-                QMessageBox.critical(
-                    self, "摄像头启动失败",
-                    f"无法启动摄像头 Camera {cam_id}:\n{str(e)}")
+                QMessageBox.critical(self, "摄像头启动失败", f"无法启动摄像头 Camera {cam_id}:\n{e!s}")
 
     def _on_image_finished(self, original, annotated, counts, elapsed_ms, boxes_detail):
         if self.sender() is not self._running_worker:
@@ -2142,12 +2183,13 @@ class MainWindow(QMainWindow):
 
         total = sum(counts.values())
         self.status_bar.showMessage(
-            f"检测完成 — 发现 {total} 处缺陷 ({elapsed_ms:.0f}ms)" if total > 0
-            else f"检测完成 — 未发现缺陷 ({elapsed_ms:.0f}ms)")
+            f"检测完成 — 发现 {total} 处缺陷 ({elapsed_ms:.0f}ms)"
+            if total > 0
+            else f"检测完成 — 未发现缺陷 ({elapsed_ms:.0f}ms)"
+        )
         self._update_ui_state()
 
-    def _on_video_frame(self, frame, annotated, counts, elapsed_ms, boxes_detail,
-                        frame_idx: int, total_frames: int):
+    def _on_video_frame(self, frame, annotated, counts, elapsed_ms, boxes_detail, frame_idx: int, total_frames: int):
         if self.sender() is not self.video_worker:
             return  # stale signal from a cancelled worker
         self._show_image(self.lbl_original, frame)
@@ -2158,11 +2200,9 @@ class MainWindow(QMainWindow):
         if now - self._last_table_update > 0.25:  # 4 Hz max
             self._populate_table(boxes_detail)
             self._last_table_update = now
-        self.lbl_video_progress.setText(
-            f"Frame: {frame_idx + 1}/{total_frames}")
+        self.lbl_video_progress.setText(f"Frame: {frame_idx + 1}/{total_frames}")
         total = sum(counts.values())
-        self.status_bar.showMessage(
-            f"视频帧 {frame_idx + 1}/{total_frames}  |  {total} defects  |  {elapsed_ms:.0f}ms")
+        self.status_bar.showMessage(f"视频帧 {frame_idx + 1}/{total_frames}  |  {total} defects  |  {elapsed_ms:.0f}ms")
 
         # Save latest for export
         self._last_annotated = annotated
@@ -2181,8 +2221,7 @@ class MainWindow(QMainWindow):
         self._update_ui_state()
 
     def _on_camera_opened(self, width: int, height: int):
-        self.status_bar.showMessage(
-            f"摄像头已就绪: {width}×{height}  |  Camera ready: {width}×{height}")
+        self.status_bar.showMessage(f"摄像头已就绪: {width}×{height}  |  Camera ready: {width}×{height}")
 
     def _on_camera_frame(self, frame, annotated, counts, elapsed_ms, boxes_detail):
         if self.sender() is not self.camera_worker:
@@ -2255,9 +2294,15 @@ class MainWindow(QMainWindow):
         f = QFont()
         f.setPointSize(sz)
         f.setBold(True)
-        for btn in [self.btn_open, self.btn_load, self.btn_detect,
-                     self.btn_stop, self.btn_save, self.btn_export,
-                     self.btn_batch]:
+        for btn in [
+            self.btn_open,
+            self.btn_load,
+            self.btn_detect,
+            self.btn_stop,
+            self.btn_save,
+            self.btn_export,
+            self.btn_batch,
+        ]:
             btn.setFont(f)
             btn.setMinimumHeight(btn_h)
 

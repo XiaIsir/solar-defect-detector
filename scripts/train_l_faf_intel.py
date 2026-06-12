@@ -18,7 +18,6 @@ from ultralytics import YOLO
 from ultralytics.utils import LOGGER
 from ultralytics.utils.loss import v8DetectionLoss
 
-
 # ===========================================================================
 # Monkey-patch: v8DetectionLoss.preprocess → CPU-safe for DirectML
 #
@@ -54,18 +53,14 @@ v8DetectionLoss.preprocess = _dml_safe_preprocess
 _orig_unique = torch.unique
 
 
-def _safe_unique(input, sorted=True, return_inverse=False,
-                 return_counts=False, dim=None):
+def _safe_unique(input, sorted=True, return_inverse=False, return_counts=False, dim=None):
     if isinstance(input, torch.Tensor) and input.device.type == "privateuseone":
         cpu_in = input.cpu()
-        res = _orig_unique(cpu_in, sorted=sorted, return_inverse=return_inverse,
-                           return_counts=return_counts, dim=dim)
+        res = _orig_unique(cpu_in, sorted=sorted, return_inverse=return_inverse, return_counts=return_counts, dim=dim)
         if isinstance(res, tuple):
-            return tuple(r.to(input.device) if isinstance(r, torch.Tensor) else r
-                         for r in res)
+            return tuple(r.to(input.device) if isinstance(r, torch.Tensor) else r for r in res)
         return res.to(input.device)
-    return _orig_unique(input, sorted=sorted, return_inverse=return_inverse,
-                        return_counts=return_counts, dim=dim)
+    return _orig_unique(input, sorted=sorted, return_inverse=return_inverse, return_counts=return_counts, dim=dim)
 
 
 torch.unique = _safe_unique
@@ -73,6 +68,7 @@ torch.Tensor.unique = lambda self, **kw: _safe_unique(self, **kw)
 
 # Patch TaskAlignedAssigner to run on CPU for DirectML (uses scatter_add_ etc.)
 from ultralytics.utils.tal import TaskAlignedAssigner
+
 
 @torch.no_grad()
 def _dml_safe_assigner_forward(self, pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt):
@@ -85,18 +81,23 @@ def _dml_safe_assigner_forward(self, pd_scores, pd_bboxes, anc_points, gt_labels
         return tuple(t.to(orig_device) for t in result)
     return self._forward(pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt)
 
+
 TaskAlignedAssigner.forward = _dml_safe_assigner_forward
 
 # Patch trainer memory functions to not call torch.cuda on DML device
 import gc
+
 from ultralytics.models.yolo.detect.train import DetectionTrainer as _DT
+
 _orig_get_memory = _DT._get_memory
 _orig_clear_memory = _DT._clear_memory
+
 
 def _dml_get_memory(self, fraction=False):
     if self.device.type == "privateuseone":
         return 0 if not fraction else 1.0
     return _orig_get_memory(self, fraction)
+
 
 def _dml_clear_memory(self, threshold=None):
     if self.device.type == "privateuseone":
@@ -104,17 +105,20 @@ def _dml_clear_memory(self, threshold=None):
         return
     return _orig_clear_memory(self, threshold)
 
+
 _DT._get_memory = _dml_get_memory
 _DT._clear_memory = _dml_clear_memory
 
 # Skip validation on DML (eval-mode BN + small spatial dims trigger oneDNN bugs)
 _orig_validate = _DT.validate
 
+
 def _dml_validate(self):
     if self.device.type == "privateuseone":
         LOGGER.info("Skipping validation on DirectML (eval-mode BN not supported)")
         return {}, 0.0
     return _orig_validate(self)
+
 
 _DT.validate = _dml_validate
 
@@ -154,7 +158,6 @@ results = model.train(
     imgsz=640,
     workers=0,
     amp=False,
-
     # Optimization
     lr0=0.01,
     lrf=0.01,
@@ -164,21 +167,27 @@ results = model.train(
     warmup_momentum=0.8,
     warmup_bias_lr=0.1,
     cos_lr=True,
-
     # Augmentation
-    hsv_h=0.015, hsv_s=0.7, hsv_v=0.4,
-    degrees=0.0, translate=0.1, scale=0.5,
-    shear=0.0, perspective=0.0,
-    flipud=0.0, fliplr=0.5,
-    mosaic=1.0, mixup=0.0,
-
+    hsv_h=0.015,
+    hsv_s=0.7,
+    hsv_v=0.4,
+    degrees=0.0,
+    translate=0.1,
+    scale=0.5,
+    shear=0.0,
+    perspective=0.0,
+    flipud=0.0,
+    fliplr=0.5,
+    mosaic=1.0,
+    mixup=0.0,
     # Logging
     project="runs/train",
     name="l_faf_intel_arc",
     exist_ok=True,
     pretrained=True,
     verbose=True,
-    save=True, save_period=10,
+    save=True,
+    save_period=10,
     val=False,
 )
 
