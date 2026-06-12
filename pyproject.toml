@@ -102,7 +102,7 @@ export-base = [
     "packaging>=26.0; platform_machine == 'aarch64' and platform_system == 'Linux' and python_version >= '3.9'", # IMX export bug
 ]
 export-legacy-torch = [
-    "numpy<2",
+    "numpy<3",
 ]
 export-tensorflow = [
     "numpy<2.0.0; python_version < '3.13'", # TF 2.20 compatibility
@@ -126,7 +126,7 @@ export-executorch = [
 ]
 export-deepx = [
     "dx_com",
-    "numpy<2",
+    "numpy<3",
 ]
 export = [
     "ultralytics[export-base]",
