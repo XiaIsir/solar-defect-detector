@@ -88,8 +88,6 @@ $$O = \sum_i \frac{w_i}{\epsilon + \sum_j w_j} \cdot I_i$$
 | **FAF-YOLOv11n**        | $3.88 \times 10^6$  | $6.2$               | FEM, C3k2_AGA, FFM_Concat | 提升 6.6%                  | 2.9 ms                             |
 | **L-FAF-YOLOv11n**      | $2.89 \times 10^6$  | $4.8$               | EFBlock, PConv, BiFPN     | 相比 FAF 小幅提升          | 1.8 ms                             |
 
-
-
 ## Claude Code 智能协同开发实施路径
 
 使用传统的开发方式去手动改写底层算子并重构复杂的 YOLO 拓扑结构，往往需要经历极其繁琐的调试和排错过程 。本方案引入 Anthropic 研发的 Agent 级智能开发 CLI 工具 **Claude Code**，通过其强大的自主感知、跨文件重构和闭环测试能力，显著加速学术方案向工业落地转化的进程 。
@@ -115,7 +113,7 @@ $$O = \sum_i \frac{w_i}{\epsilon + \sum_j w_j} \cdot I_i$$
         └──────────────────────┬──────────────────────┘
                                │
                                ▼
-                   
+
                     ── 执行 yolo 训练冒烟测试
                     ── 若报错，自主抓取日志并修复
                                │
@@ -177,7 +175,7 @@ class ELA(nn.Module):
     def __init__(self, channels, kernel_size=7):
         super().__init__()
         self.pad = kernel_size // 2
-        # 一维深层分组卷积，保持通道不降维，避免信息丢失 
+        # 一维深层分组卷积，保持通道不降维，避免信息丢失
         self.conv_h = nn.Conv1d(channels, channels, kernel_size=kernel_size, padding=self.pad, groups=channels, bias=False)
         self.conv_w = nn.Conv1d(channels, channels, kernel_size=kernel_size, padding=self.pad, groups=channels, bias=False)
         self.gn = nn.GroupNorm(num_groups=min(32, channels), num_channels=channels)
@@ -185,15 +183,15 @@ class ELA(nn.Module):
 
     def forward(self, x):
         b, c, h, w = x.size()
-        # 沿空间条带维度执行全局平均池化 
+        # 沿空间条带维度执行全局平均池化
         x_h = torch.mean(x, dim=3)  # Shape: (B, C, H)
         x_w = torch.mean(x, dim=2)  # Shape: (B, C, W)
-        
+
         # 提取水平与垂直注意力权重
         att_h = self.sigmoid(self.gn(self.conv_h(x_h))).view(b, c, h, 1)
         att_w = self.sigmoid(self.gn(self.conv_w(x_w))).view(b, c, 1, w)
-        
-        # 动态相乘融合 
+
+        # 动态相乘融合
         return x * att_h * att_w
 
 class PConv(nn.Module):
@@ -250,36 +248,36 @@ def parse_model(d, ch, verbose=True):
     for i, (f, n, m, args) in enumerate(d['backbone'] + d['head']):
         # 将字符串表示的 m 动态解析为类实体对象 [19]
         m = getattr(modules, m) if isinstance(m, str) else m
-        
-        # 针对 C3k2_AGA 和 EFBlock 执行通道重组 
+
+        # 针对 C3k2_AGA 和 EFBlock 执行通道重组
         if m in (C3k2_AGA, EFBlock):
             c1, c2 = ch[f], args
-            if c2!= nc:  # 通道倍率自适应缩放 
+            if c2!= nc:  # 通道倍率自适应缩放
                 c2 = make_divisible(c2 * width, 8)
             args = [c1, c2, *args[1:]]
-            
+
         elif m is FEM:
             c1 = ch[f]
             c2 = make_divisible(args * width, 8)
             args = [c1, c2, *args[1:]]
-            
+
         elif m is PConv:
             c1, c2 = ch[f], args
             # PConv 参数中 args 即为输出通道
             c2 = make_divisible(c2 * width, 8) if c2!= nc else c2
             args = [c1, c2, *args[1:]]
-            
+
         elif m is ELA:
             c1 = ch[f]
             args = [c1, *args]
-            
+
         elif m is BiFPN_Concat:
             # BiFPN 多层自适应加权特征融合
             # 此时 f 应当是一个表示多尺度输入层索引的列表
             c2 = sum(ch[x] for x in f)
             # 传参逻辑：传入输入通道和需要合并的层级索引
             args = [c2, f]
-            
+
         #... 后续进行标准的 PyTorch Layer 实例化与 ch[i] 通道更新，模型解析逻辑保持不变...
 ```
 
@@ -303,14 +301,14 @@ backbone:
   # 下采样路径，高频细节高保真特征提取
   - [-1, 1, Conv, ]      # 0-P1/2 (Size: 320x320)
   - [-1, 1, Conv, ]     # 1-P2/4 (Size: 160x160)
-  -] # 2-P2/4: 通过代理注意力对浅层小特征图赋予长距离感知 
+  -] # 2-P2/4: 通过代理注意力对浅层小特征图赋予长距离感知
   - [-1, 1, Conv, ]     # 3-P3/8 (Size: 80x80)
   -] # 4-P3/8
-  - [-1, 1, FEM, ]            # 5-P4/16: 采用多通路分流自适应特征处理，自适应缩放缺陷尺寸 
+  - [-1, 1, FEM, ]            # 5-P4/16: 采用多通路分流自适应特征处理，自适应缩放缺陷尺寸
   -] # 6-P4/16
   - [-1, 1, Conv, ]    # 7-P5/32 (Size: 10x10)
   -]# 8-P5/32: 顶层深度特征图自注意力感知
-  -]       # 9-P5/32: 空间金字塔特征池化 
+  -]       # 9-P5/32: 空间金字塔特征池化
 
 head:
   # 多尺度融合路径 (Neck)
@@ -348,9 +346,9 @@ scales:
 
 backbone:
   # 极致轻量化下采样路径
-  - [-1, 1, PConv, ]     # 0-P1/2: 使用部分卷积减少首层高分辨率内存带宽压力 
+  - [-1, 1, PConv, ]     # 0-P1/2: 使用部分卷积减少首层高分辨率内存带宽压力
   - [-1, 1, PConv, ]    # 1-P2/4
-  -]        # 2-P2/4: 深度分组卷积 + ELA 注意力，提供低成本边缘定位 
+  -]        # 2-P2/4: 深度分组卷积 + ELA 注意力，提供低成本边缘定位
   - [-1, 1, PConv, ]    # 3-P3/8
   -]        # 4-P3/8
   - [-1, 1, PConv, ]    # 5-P4/16
@@ -367,7 +365,7 @@ head:
   -]                    # 12 (Size: 20x20)
 
   - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 13 (Size: 40x40)
-  - [[-1, 4], 1, BiFPN_Concat,]             # 14: P3 跨层加权特征融合 
+  - [[-1, 4], 1, BiFPN_Concat,]             # 14: P3 跨层加权特征融合
   -]                    # 15 (Size: 40x40)
 
   - [-1, 1, PConv, ]                # 16 (Size: 20x20)
@@ -414,7 +412,7 @@ head:
                     └───────────────────────────────┘
                     ── 像素级缺陷框高亮框选 (Bounding Box)
                     ── 支持 FAF 与 L-FAF 同步侧边栏对比
-                    ── 导出含有定位和类别参数的巡检日志 
+                    ── 导出含有定位和类别参数的巡检日志
 ```
 
 ### 基于 Claude Code 的自动化部署与回归测试
@@ -423,33 +421,33 @@ head:
 
 1. **一键语法与架构拓扑诊断：**
 
-   在修改完解析器和 YAML 拓扑后，运行以下指令使 Claude 自主进行架构编译合法性校验：
+    在修改完解析器和 YAML 拓扑后，运行以下指令使 Claude 自主进行架构编译合法性校验：
 
-   Bash
+    Bash
 
-   ```
-   claude "Execute a verification script using python to instantiate 'l_faf_yolov11n.yaml' to ensure all channel matrices math and stride mappings are completely correct. Output any shape mismatch errors and rewrite Tasks.py instantly if any error occurs."
-   ```
+    ```
+    claude "Execute a verification script using python to instantiate 'l_faf_yolov11n.yaml' to ensure all channel matrices math and stride mappings are completely correct. Output any shape mismatch errors and rewrite Tasks.py instantly if any error occurs."
+    ```
 
-   此指令中，Claude Code 将通过其底层运行时工具执行代码构建，一旦捕获到 Shape Mismatch 或是参数解析异常，会立即调起其本地编辑器定位对应行并进行自愈式修复，直至实例化成功 。
+    此指令中，Claude Code 将通过其底层运行时工具执行代码构建，一旦捕获到 Shape Mismatch 或是参数解析异常，会立即调起其本地编辑器定位对应行并进行自愈式修复，直至实例化成功 。
 
 2. **微量数据集极简冒烟测试（Smoke Test）：** 在开始大规模工业数据集训练前，通过运行极轻量的 `coco8` 数据集，检测模型在前向传播和反向传播时的梯度更新及损失收敛表现是否正常 ：
 
-   Bash
+    Bash
 
-   ```
-   claude "Run a single-epoch training smoke test with custom configuration 'faf_yolov11n.yaml' using coco8.yaml dataset. Verify that gradient backprop is normal and no CUDA OOM occurs."
-   ```
+    ```
+    claude "Run a single-epoch training smoke test with custom configuration 'faf_yolov11n.yaml' using coco8.yaml dataset. Verify that gradient backprop is normal and no CUDA OOM occurs."
+    ```
 
 3. **模型一键多格式导出与边缘端优化：** 当模型在服务器端完成高性能训练并收敛后，需要通过导出机制将其转化成适合边缘嵌入式网关运行的专用加速引擎 ：
 
-   Bash
+    Bash
 
-   ```
-   claude "Export the best.pt trained checkpoint of L-FAF-YOLOv11n into highly optimized ONNX and TensorRT FP16 engines, then benchmark its latency."
-   ```
+    ```
+    claude "Export the best.pt trained checkpoint of L-FAF-YOLOv11n into highly optimized ONNX and TensorRT FP16 engines, then benchmark its latency."
+    ```
 
-   通过这一步，开发人员能够获得模型在 TensorRT 特征图量化之后的精确推理延迟，从而验证 L-FAF-YOLOv11n 的轻量化优化对生产线节拍的响应表现 。
+    通过这一步，开发人员能够获得模型在 TensorRT 特征图量化之后的精确推理延迟，从而验证 L-FAF-YOLOv11n 的轻量化优化对生产线节拍的响应表现 。
 
 ## 方案实施效益与工业工程化总结
 

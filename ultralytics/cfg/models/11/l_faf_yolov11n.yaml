@@ -14,44 +14,44 @@
 #   - BiFPN_Concat with learnable per-input weights
 
 # Parameters
-nc: 5  # black_border, broken, hot_spot, no_electricity, scratch
+nc: 5 # black_border, broken, hot_spot, no_electricity, scratch
 scales:
-  n: [0.50, 0.25, 1024]  # [depth_multiple, width_multiple, max_channels]
+  n: [0.50, 0.25, 1024] # [depth_multiple, width_multiple, max_channels]
 
 # L-FAF-YOLOv11n backbone
 backbone:
   # [from, repeats, module, args]
-  - [-1, 1, Conv, [64, 3, 2]]      # 0-P1/2   stem (standard Conv, full RGB)
-  - [-1, 1, Conv, [128, 3, 2]]     # 1-P2/4   stem (standard Conv, full RGB)
-  - [-1, 1, EFBlock, [128, True]]  # 2-P2/4   residual
-  - [-1, 1, PConv, [256, 3, 2]]   # 3-P3/8   down-sample
+  - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2   stem (standard Conv, full RGB)
+  - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4   stem (standard Conv, full RGB)
+  - [-1, 1, EFBlock, [128, True]] # 2-P2/4   residual
+  - [-1, 1, PConv, [256, 3, 2]] # 3-P3/8   down-sample
   - [-1, 1, EFBlock, [256, True]] # 4-P3/8   residual
-  - [-1, 1, PConv, [512, 3, 2]]   # 5-P4/16  down-sample
+  - [-1, 1, PConv, [512, 3, 2]] # 5-P4/16  down-sample
   - [-1, 1, EFBlock, [512, True]] # 6-P4/16  residual
-  - [-1, 1, PConv, [1024, 3, 2]]  # 7-P5/32  down-sample
+  - [-1, 1, PConv, [1024, 3, 2]] # 7-P5/32  down-sample
   - [-1, 1, EFBlock, [1024, True]] # 8-P5/32 residual
-  - [-1, 1, SPPF, [1024, 5]]      # 9-P5/32  spatial pyramid pool
-  - [-1, 2, C2PSA, [1024]]        # 10-P5/32 cross-stage partial self-attention
+  - [-1, 1, SPPF, [1024, 5]] # 9-P5/32  spatial pyramid pool
+  - [-1, 2, C2PSA, [1024]] # 10-P5/32 cross-stage partial self-attention
 
 # L-FAF-YOLOv11n head — BiFPN adaptive weighted multi-scale fusion
 head:
   # Top-down pathway (upsample + fuse)
-  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]    # 11: P5 → P4
-  - [[-1, 6], 1, BiFPN_Concat, []]                   # 12: upsample + backbone-P4
-  - [-1, 1, EFBlock, [512, True]]                  # 13: neck P4 (proj shortcut)
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 11: P5 → P4
+  - [[-1, 6], 1, BiFPN_Concat, []] # 12: upsample + backbone-P4
+  - [-1, 1, EFBlock, [512, True]] # 13: neck P4 (proj shortcut)
 
-  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]    # 14: P4 → P3
-  - [[-1, 4], 1, BiFPN_Concat, []]                   # 15: upsample + backbone-P3
-  - [-1, 1, EFBlock, [256, True]]                  # 16: P3 detection head input
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 14: P4 → P3
+  - [[-1, 4], 1, BiFPN_Concat, []] # 15: upsample + backbone-P3
+  - [-1, 1, EFBlock, [256, True]] # 16: P3 detection head input
 
   # Bottom-up pathway (downsample + fuse)
-  - [-1, 1, PConv, [256, 3, 2]]                   # 17: P3 → P4
-  - [[-1, 13, 6], 1, BiFPN_Concat, []]               # 18: neck + neck-P4 + backbone-P4
-  - [-1, 1, EFBlock, [512, True]]                  # 19: P4 detection head input
+  - [-1, 1, PConv, [256, 3, 2]] # 17: P3 → P4
+  - [[-1, 13, 6], 1, BiFPN_Concat, []] # 18: neck + neck-P4 + backbone-P4
+  - [-1, 1, EFBlock, [512, True]] # 19: P4 detection head input
 
-  - [-1, 1, PConv, [512, 3, 2]]                   # 20: P4 → P5
-  - [[-1, 10], 1, BiFPN_Concat, []]                  # 21: neck + backbone-P5(C2PSA)
-  - [-1, 1, EFBlock, [1024, True]]                 # 22: P5 detection head input
+  - [-1, 1, PConv, [512, 3, 2]] # 20: P4 → P5
+  - [[-1, 10], 1, BiFPN_Concat, []] # 21: neck + backbone-P5(C2PSA)
+  - [-1, 1, EFBlock, [1024, True]] # 22: P5 detection head input
 
   # Multi-scale decoupled detection
-  - [[16, 19, 22], 1, Detect, [nc]]               # 23: P3 + P4 + P5 → Detect
+  - [[16, 19, 22], 1, Detect, [nc]] # 23: P3 + P4 + P5 → Detect
