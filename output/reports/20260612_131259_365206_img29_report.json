@@ -1,0 +1,21 @@
+{
+  "timestamp": "2026-06-12T13:12:59.365206",
+  "image_name": "img29.jpg",
+  "image_path": "F:\\ultralytics-main\\datasets\\solar_dataset\\images\\val\\img29.jpg",
+  "confidence_threshold": 0.3,
+  "inference_time_ms": 100.8,
+  "total_defects": 1,
+  "per_class_counts": {
+    "no_electricity": 1
+  },
+  "detections": [
+    {
+      "class": "no_electricity",
+      "confidence": 0.9191372394561768,
+      "x1": 1,
+      "x2": 150,
+      "y1": 4,
+      "y2": 594
+    }
+  ]
+}

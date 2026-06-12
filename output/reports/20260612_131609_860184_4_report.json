@@ -1,0 +1,21 @@
+{
+  "timestamp": "2026-06-12T13:16:09.860184",
+  "image_name": "4.png",
+  "image_path": "E:\\神经网络和深度学习\\图片\\4.png",
+  "confidence_threshold": 0.3,
+  "inference_time_ms": 77.0,
+  "total_defects": 1,
+  "per_class_counts": {
+    "no_electricity": 1
+  },
+  "detections": [
+    {
+      "class": "no_electricity",
+      "confidence": 0.3411179780960083,
+      "x1": 128,
+      "x2": 1966,
+      "y1": 74,
+      "y2": 1721
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+# Solar Panel Defect Detection - PV-Multi-Defect Dataset
+# Dataset: CCNUZFW/PV-Multi-Defect (CC BY 3.0)
+# Paper: GBH-YOLOv5 (Electronics, 2023) doi:10.3390/electronics12030561
+
+path: ./datasets/solar_dataset
+train: images/train
+val: images/val
+
+names:
+  0: black_border
+  1: broken
+  2: hot_spot
+  3: no_electricity
+  4: scratch

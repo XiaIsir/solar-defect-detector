@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-06-12T01:10:22.192685",
+  "image_name": "panel_0000.jpg",
+  "image_path": "C:\\Users\\21016\\AppData\\Local\\Temp\\test_images_smd7vgz4\\panel_0000.jpg",
+  "confidence_threshold": 0.5,
+  "inference_time_ms": 80.8,
+  "total_defects": 0,
+  "per_class_counts": {},
+  "detections": []
+}

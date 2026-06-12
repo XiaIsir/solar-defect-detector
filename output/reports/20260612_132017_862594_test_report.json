@@ -1,0 +1,17 @@
+{
+  "total": 3,
+  "counts": {
+    "scratch": 1,
+    "hot_spot": 2
+  },
+  "detections": [
+    {
+      "class": "scratch",
+      "confidence": 0.95,
+      "x1": 10,
+      "y1": 20,
+      "x2": 50,
+      "y2": 60
+    }
+  ]
+}

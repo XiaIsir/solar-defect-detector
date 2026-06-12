@@ -1,0 +1,9 @@
+metric,value
+folder,F:\ultralytics-main\datasets\solar_dataset\images\val
+total_images,222
+processed,222
+total_defects,543
+avg_time_ms,63.60277072222367
+total_time_ms,14119.815100333653
+per_class,"{'hot_spot': 269, 'no_electricity': 30, 'scratch': 187, 'black_border': 45, 'broken': 12}"
+cancelled,False

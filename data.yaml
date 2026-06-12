@@ -1,0 +1,14 @@
+# Solar Panel Defect Detection - PV-Multi-Defect Dataset
+# Dataset: CCNUZFW/PV-Multi-Defect (CC BY 3.0)
+# Paper: GBH-YOLOv5 (Electronics, 2023) doi:10.3390/electronics12030561
+
+path: F:/ultralytics-main/datasets/solar_dataset
+train: images/train
+val: images/val
+
+names:
+  0: black_border      # 光伏板有黑色或灰色边框区域
+  1: broken            # 光伏板破损区域（裂纹）
+  2: hot_spot          # 光伏板有明显亮斑区域
+  3: no_electricity    # 光伏板无电且显示黑色区域（断格）
+  4: scratch           # 光伏板有划痕区域
