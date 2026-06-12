@@ -113,7 +113,7 @@ export-tensorflow = [
     "googleapis-common-protos<1.74.0; python_version <= '3.12'", # >=1.74.0 uses protobuf gencode 7.34.1, incompatible with tensorflow<=2.19 (protobuf<6) and breaks ray[tune] import
     "tensorstore>=0.1.63; platform_machine == 'aarch64' and python_version >= '3.9'", # for TF Raspberry Pi exports
     "h5py!=3.11.0; platform_machine == 'aarch64'", # fix h5py build issues due to missing aarch64 wheels in 3.11 release
-    "setuptools<=81.0.0",  # pin due to >=82.0.0 breaking tensorflow.js package
+    "setuptools<=82.0.1",  # pin due to >=82.0.0 breaking tensorflow.js package
 ]
 export-coreml = [
     "numpy<=2.3.5; python_version >= '3.13'",  # pin until CoreML>9.0 new release
@@ -138,7 +138,7 @@ solutions = [
     "lap>=0.5.12",  # for solution tracking linear assignment
     "faiss-cpu",  # for similarity search
     "openai-clip>=1.0.1",  # for similarity search text/image embeddings
-    "setuptools>=80.0.0,<81.0.0; python_version >= '3.9'",  # openai-clip imports pkg_resources.packaging, removed in setuptools>=81
+    "setuptools>=80.0.0,<83.0.0; python_version >= '3.9'",  # openai-clip imports pkg_resources.packaging, removed in setuptools>=81
     "setuptools<76.0.0; python_version < '3.9'",  # provide pkg_resources for openai-clip on Python 3.8 (setuptools>=76 drops 3.8, >=81 drops pkg_resources)
     "streamlit>=1.51.0; python_version >= '3.10'",    # for live inference on web browser, i.e `yolo streamlit-predict`
     "streamlit>=1.29.0,<1.51.0; python_version < '3.10' and (platform_machine != 'aarch64' or platform_system != 'Linux')",

@@ -7,8 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ultralytics.utils.torch_utils import fuse_conv_and_bn
 from ultralytics.utils.ops import make_divisible
+from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
 from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad
 from .transformer import TransformerBlock
@@ -21,7 +21,9 @@ __all__ = (
     "C3TR",
     "CIB",
     "DFL",
+    "ELA",
     "ELAN1",
+    "FEM",
     "PSA",
     "SPP",
     "SPPELAN",
@@ -30,6 +32,7 @@ __all__ = (
     "ADown",
     "Attention",
     "BNContrastiveHead",
+    "BiFPN_Concat",
     "Bottleneck",
     "BottleneckCSP",
     "C2f",
@@ -44,15 +47,12 @@ __all__ = (
     "CBLinear",
     "ContrastiveHead",
     "EFBlock",
-    "ELA",
-    "FEM",
     "GhostBottleneck",
     "HGBlock",
     "HGStem",
     "ImagePoolingAttn",
     "PConv",
     "Proto",
-    "BiFPN_Concat",
     "RepC3",
     "RepNCSPELAN4",
     "RepVGGDW",
@@ -2084,23 +2084,20 @@ class RealNVP(nn.Module):
 
 
 class ELA(nn.Module):
-    """
-    Efficient Local Attention (ELA) Module.
+    """Efficient Local Attention (ELA) Module.
 
-    Uses non-dimensionality-reduction strip pooling with 1D grouped convolutions
-    to dynamically derive horizontal and vertical spatial attention weights.
+    Uses non-dimensionality-reduction strip pooling with 1D grouped convolutions to dynamically derive horizontal and
+    vertical spatial attention weights.
     """
 
     def __init__(self, channels: int, kernel_size: int = 7):
         super().__init__()
         self.pad = kernel_size // 2
         self.conv_h = nn.Conv1d(
-            channels, channels, kernel_size=kernel_size, padding=self.pad,
-            groups=channels, bias=False
+            channels, channels, kernel_size=kernel_size, padding=self.pad, groups=channels, bias=False
         )
         self.conv_w = nn.Conv1d(
-            channels, channels, kernel_size=kernel_size, padding=self.pad,
-            groups=channels, bias=False
+            channels, channels, kernel_size=kernel_size, padding=self.pad, groups=channels, bias=False
         )
         # Find largest divisor of channels that is ≤ 32 so GroupNorm is always valid
         ng = min(32, channels)
@@ -2121,21 +2118,21 @@ class ELA(nn.Module):
 
 
 class PConv(nn.Module):
-    """
-    Partial Convolution (PConv) Module.
+    """Partial Convolution (PConv) Module.
 
-    Applies standard 3x3 convolution only to the first 1/n_div of input channels,
-    leaving the remaining channels untouched to reduce memory access cost (MAC).
+    Applies standard 3x3 convolution only to the first 1/n_div of input channels, leaving the remaining channels
+    untouched to reduce memory access cost (MAC).
     """
 
-    def __init__(self, dim: int, o_dim: int, n_div: int = 4, kernel_size: int = 3,
-                 stride: int = 1, padding: int = 1):
+    def __init__(self, dim: int, o_dim: int, n_div: int = 4, kernel_size: int = 3, stride: int = 1, padding: int = 1):
         super().__init__()
         self.dim_conv = max(dim // n_div, 1)
         self.dim_untouched = dim - self.dim_conv
-        self.conv = nn.Conv2d(
-            self.dim_conv, self.dim_conv, kernel_size, stride, padding, bias=False
-        ) if self.dim_conv > 0 else nn.Identity()
+        self.conv = (
+            nn.Conv2d(self.dim_conv, self.dim_conv, kernel_size, stride, padding, bias=False)
+            if self.dim_conv > 0
+            else nn.Identity()
+        )
         self.proj = nn.Conv2d(dim, o_dim, 1, bias=False) if dim != o_dim else nn.Identity()
         self.stride = stride
 
@@ -2150,11 +2147,10 @@ class PConv(nn.Module):
 
 
 class AgentAttention(nn.Module):
-    """
-    Agent Attention Module.
+    """Agent Attention Module.
 
-    Introduces a small set of learnable proxy tokens A (M << N) that mediate
-    global self-attention at linear complexity O(N M d) instead of O(N² d).
+    Introduces a small set of learnable proxy tokens A (M << N) that mediate global self-attention at linear complexity
+    O(N M d) instead of O(N² d).
 
     1) Information Aggregation:   A attends to K,V → V_A
     2) Information Broadcast:     Q attends to V_A     → output
@@ -2163,7 +2159,7 @@ class AgentAttention(nn.Module):
     def __init__(self, dim: int, num_agent_tokens: int = 16):
         super().__init__()
         self.num_agent_tokens = num_agent_tokens
-        self.scale = dim ** -0.5
+        self.scale = dim**-0.5
 
         self.agent_tokens = nn.Parameter(torch.randn(1, num_agent_tokens, dim))
         self.qkv = Conv(dim, dim * 3, 1, act=False)
@@ -2173,23 +2169,23 @@ class AgentAttention(nn.Module):
         B, C, H, W = x.shape
         N = H * W
 
-        qkv = self.qkv(x).reshape(B, 3, C, N)       # (B, 3, C, N)
-        q, k, v = qkv[:, 0], qkv[:, 1], qkv[:, 2]   # each (B, C, N)
+        qkv = self.qkv(x).reshape(B, 3, C, N)  # (B, 3, C, N)
+        q, k, v = qkv[:, 0], qkv[:, 1], qkv[:, 2]  # each (B, C, N)
         q = q.transpose(1, 2)  # (B, N, C)
         k = k.transpose(1, 2)  # (B, N, C)
         v = v.transpose(1, 2)  # (B, N, C)
 
-        A = self.agent_tokens.expand(B, -1, -1)      # (B, M, C)
+        A = self.agent_tokens.expand(B, -1, -1)  # (B, M, C)
 
         # Step 1 — Information Aggregation: A attends to K,V
         attn_A = (A @ k.transpose(-2, -1)) * self.scale  # (B, M, N)
         attn_A = attn_A.softmax(dim=-1)
-        V_A = attn_A @ v                                   # (B, M, C)
+        V_A = attn_A @ v  # (B, M, C)
 
         # Step 2 — Information Broadcast: Q attends to V_A
-        attn_Q = (q @ A.transpose(-2, -1)) * self.scale   # (B, N, M)
+        attn_Q = (q @ A.transpose(-2, -1)) * self.scale  # (B, N, M)
         attn_Q = attn_Q.softmax(dim=-1)
-        out = attn_Q @ V_A                                  # (B, N, C)
+        out = attn_Q @ V_A  # (B, N, C)
 
         out = out.transpose(1, 2).reshape(B, C, H, W)
         return self.proj(out)
@@ -2198,8 +2194,7 @@ class AgentAttention(nn.Module):
 class AgentBottleneck(nn.Module):
     """Bottleneck with Agent Attention in the residual branch for global dependency modeling."""
 
-    def __init__(self, c1: int, c2: int, shortcut: bool = True, g: int = 1,
-                 e: float = 0.5, num_agent_tokens: int = 16):
+    def __init__(self, c1: int, c2: int, shortcut: bool = True, g: int = 1, e: float = 0.5, num_agent_tokens: int = 16):
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 3, 1)
@@ -2215,37 +2210,40 @@ class AgentBottleneck(nn.Module):
 
 
 class C3k2_AGA(C2f):
-    """
-    C3k2 variant with Agent-Attention-enabled Bottleneck.
+    """C3k2 variant with Agent-Attention-enabled Bottleneck.
 
-    Follows the C3k2 macro-structure but replaces each standard Bottleneck with
-    an AgentBottleneck that captures global context via learnable proxy tokens.
+    Follows the C3k2 macro-structure but replaces each standard Bottleneck with an AgentBottleneck that captures global
+    context via learnable proxy tokens.
     """
 
-    def __init__(self, c1: int, c2: int, n: int = 1, shortcut: bool = True,
-                 g: int = 1, e: float = 0.5, num_agent_tokens: int = 16):
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        n: int = 1,
+        shortcut: bool = True,
+        g: int = 1,
+        e: float = 0.5,
+        num_agent_tokens: int = 16,
+    ):
         super().__init__(c1, c2, n, shortcut, g, e)
         self.m = nn.ModuleList(
-            AgentBottleneck(self.c, self.c, shortcut, g, e=1.0,
-                            num_agent_tokens=num_agent_tokens)
-            for _ in range(n)
+            AgentBottleneck(self.c, self.c, shortcut, g, e=1.0, num_agent_tokens=num_agent_tokens) for _ in range(n)
         )
 
 
 class FEM(nn.Module):
-    """
-    Feature Enhancement Module — adaptive multi-scale perception convolution.
+    """Feature Enhancement Module — adaptive multi-scale perception convolution.
 
-    Three parallel branches (dense 3×3, dilated 3×3 @ r=2, dilated 3×3 @ r=4)
-    produce multi-receptive-field features. A channel-level attention mechanism
-    (GAP → FC → ReLU → FC → Sigmoid) predicts per-channel weights α,β,γ
-    (α+β+γ=1) that adaptively fuse the three branches via weighted summation.
+    Three parallel branches (dense 3×3, dilated 3×3 @ r=2, dilated 3×3 @ r=4) produce multi-receptive-field features. A
+    channel-level attention mechanism (GAP → FC → ReLU → FC → Sigmoid) predicts per-channel weights α,β,γ (α+β+γ=1) that
+    adaptively fuse the three branches via weighted summation.
     """
 
     def __init__(self, c1: int, c2: int):
         super().__init__()
         c_ = c2
-        self.cv_up = Conv(c1, c_, 3, 1, d=1)   # dense 3×3
+        self.cv_up = Conv(c1, c_, 3, 1, d=1)  # dense 3×3
         self.cv_mid = Conv(c1, c_, 3, 1, d=2)  # dilated r=2
         self.cv_low = Conv(c1, c_, 3, 1, d=4)  # dilated r=4
 
@@ -2254,17 +2252,17 @@ class FEM(nn.Module):
         self.fc2 = nn.Linear(c_ // 4, c_ * 3)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        f_up = self.cv_up(x)    # (B, c2, H, W)
+        f_up = self.cv_up(x)  # (B, c2, H, W)
         f_mid = self.cv_mid(x)  # (B, c2, H, W)
         f_low = self.cv_low(x)  # (B, c2, H, W)
 
         # Channel descriptor from summed features
         f_sum = f_up + f_mid + f_low
-        s = self.gap(f_sum).flatten(1)           # (B, c2)
-        s = F.relu(self.fc1(s))                   # (B, c2//4)
-        s = self.fc2(s)                            # (B, c2*3)
-        s = s.reshape(-1, 3, s.shape[1] // 3)     # (B, 3, c2)
-        w = s.softmax(dim=1)                       # per-channel α+β+γ=1
+        s = self.gap(f_sum).flatten(1)  # (B, c2)
+        s = F.relu(self.fc1(s))  # (B, c2//4)
+        s = self.fc2(s)  # (B, c2*3)
+        s = s.reshape(-1, 3, s.shape[1] // 3)  # (B, 3, c2)
+        w = s.softmax(dim=1)  # per-channel α+β+γ=1
 
         alpha = w[:, 0, :].view(-1, w.shape[2], 1, 1)
         beta = w[:, 1, :].view(-1, w.shape[2], 1, 1)
@@ -2274,11 +2272,9 @@ class FEM(nn.Module):
 
 
 class BiFPN_Concat(nn.Module):
-    """
-    BiFPN-style adaptive weighted feature fusion with concatenation.
+    """BiFPN-style adaptive weighted feature fusion with concatenation.
 
-    Each input feature map is assigned a learnable non-negative weight wᵢ
-    (enforced via ReLU). Fast normalised fusion:
+    Each input feature map is assigned a learnable non-negative weight wᵢ (enforced via ReLU). Fast normalised fusion:
         O = Σᵢ (wᵢ / (ε + Σⱼ wⱼ)) · Iᵢ
     followed by torch.cat along dim=1.
     """
@@ -2286,8 +2282,7 @@ class BiFPN_Concat(nn.Module):
     def __init__(self, dimension: int = 1, max_inputs: int = 5):
         super().__init__()
         self.d = dimension
-        self.w = nn.Parameter(torch.ones(max_inputs, dtype=torch.float32),
-                              requires_grad=True)
+        self.w = nn.Parameter(torch.ones(max_inputs, dtype=torch.float32), requires_grad=True)
         self.epsilon = 1e-4
 
     def forward(self, x: list[torch.Tensor]) -> torch.Tensor:
@@ -2300,7 +2295,7 @@ class BiFPN_Concat(nn.Module):
             resized.append(xi)
 
         n = len(resized)
-        w = F.relu(self.w[:n])                     # non-negative weights
+        w = F.relu(self.w[:n])  # non-negative weights
         w_sum = w.sum() + self.epsilon
         weighted = [(w[i] / w_sum) * resized[i] for i in range(n)]
 
@@ -2308,25 +2303,22 @@ class BiFPN_Concat(nn.Module):
 
 
 class EFBlock(nn.Module):
-    """
-    Efficient Fusion Block with learnable residual projection.
+    """Efficient Fusion Block with learnable residual projection.
 
-    Bottleneck: 1x1 squeeze → depth-wise 3x3 → ELA attention → 1x1 expand.
-    When shortcut=True, an identity or 1x1 projection is added so that
-    gradient highways are never broken, even at fusion nodes where c1 != c2.
+    Bottleneck: 1x1 squeeze → depth-wise 3x3 → ELA attention → 1x1 expand. When shortcut=True, an identity or 1x1
+    projection is added so that gradient highways are never broken, even at fusion nodes where c1 != c2.
 
-    The expansion ratio *e* controls the bottleneck width; 0.75 keeps
-    sufficient cross-channel capacity while still reducing MAC vs. standard Conv.
+    The expansion ratio *e* controls the bottleneck width; 0.75 keeps sufficient cross-channel capacity while still
+    reducing MAC vs. standard Conv.
     """
 
-    def __init__(self, c1: int, c2: int, shortcut: bool = True, k: int = 3,
-                 e: float = 0.75):
+    def __init__(self, c1: int, c2: int, shortcut: bool = True, k: int = 3, e: float = 0.75):
         super().__init__()
         c_ = make_divisible(int(c2 * e), 8)  # hidden channels, divisible for GroupNorm
-        self.cv1 = Conv(c1, c_, 1, 1)              # point-wise squeeze
-        self.cv2 = Conv(c_, c_, k, 1, g=c_)        # depth-wise 3x3
+        self.cv1 = Conv(c1, c_, 1, 1)  # point-wise squeeze
+        self.cv2 = Conv(c_, c_, k, 1, g=c_)  # depth-wise 3x3
         self.ela = ELA(c_)
-        self.cv3 = Conv(c_, c2, 1, 1)              # point-wise expand
+        self.cv3 = Conv(c_, c2, 1, 1)  # point-wise expand
         self.add = shortcut
         # Projection shortcut so residuals survive even when c1 != c2
         self.shortcut_proj = Conv(c1, c2, 1, 1, act=False) if c1 != c2 else nn.Identity()
