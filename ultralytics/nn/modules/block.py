@@ -2080,7 +2080,7 @@ class RealNVP(nn.Module):
         return self.prior.log_prob(z) + log_det
 
 
-# ==================== Custom Operators for YOLOv11 Solar Panel Defect Detection ====================
+# ==================== solar-defect-detector custom modules ====================
 
 
 class ELA(nn.Module):

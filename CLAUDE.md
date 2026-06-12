@@ -1,4 +1,4 @@
-# CLAUDE.md - YOLOv11 Solar Panel Defect Detection Project Guidelines
+# CLAUDE.md - solar-defect-detector Project Guidelines
 
 ## Core Command References
 

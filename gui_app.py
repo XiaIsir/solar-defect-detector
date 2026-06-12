@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Solar Panel Defect Detection System — Industrial Visual Inspection Software
+solar-defect-detector — Industrial Visual Inspection Software
 PyQt5 + L-FAF-YOLOv11n — matching paper Chapter 5 specifications.
 
 Paper: 基于改进YOLOv11n算法的太阳能电池板缺陷检测技术研究 (王逸凡, 2025)
@@ -131,7 +131,7 @@ class LoginDialog(QDialog):
     """Login dialog matching paper Fig 5.1 / 5.2."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("用户登录 — Solar Panel Defect Detection")
+        self.setWindowTitle("用户登录 — solar-defect-detector")
         self.setMinimumSize(420, 320)
         self.resize(460, 360)
         self.setStyleSheet(self._style())
@@ -154,7 +154,7 @@ class LoginDialog(QDialog):
         layout.setSpacing(14)
         layout.setContentsMargins(40, 30, 40, 20)
 
-        title = QLabel("太阳能电池板缺陷检测系统")
+        title = QLabel("solar-defect-detector")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 20px; font-weight: bold; color: #4A90E2;")
         layout.addWidget(title)
@@ -221,62 +221,64 @@ class LoginDialog(QDialog):
 # ===========================================================================
 # Image Preprocessing — paper §5.4.2 "图像预处理"
 # ===========================================================================
-def apply_preprocess(img_bgr: np.ndarray, method: str) -> np.ndarray:
-    """Apply selected preprocessing while preserving colour-space integrity.
+# ---------------------------------------------------------------------------
+# 预处理映射表 — UI 标签与处理函数统一绑定，消除分离常量/if-elif 硬编码
+# 每个条目: (UI显示文本, 处理函数)
+# 后续添加新预处理只需在此字典追加一行，UI 下拉框和推理流程自动同步
+# ---------------------------------------------------------------------------
+def _prep_none(img):
+    return img
 
-    The model was trained on RGB images. Converting to grayscale and
-    pseudo-colouring back (GRAY→BGR) destroys chromatic information and
-    introduces a train/inference domain gap, silently degrading mAP.
+def _prep_clahe(img):
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    l = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(l)
+    return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
 
-    All contrast-enhancement methods therefore operate on the luminance
-    channel only (LAB-L or YCrCb-Y). Structure filters (sharpen, denoise,
-    bilateral) are applied to each BGR channel independently.
-    """
-    if method == "none":
-        return img_bgr
+def _prep_histeq(img):
+    ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+    y, cr, cb = cv2.split(ycrcb)
+    y = cv2.equalizeHist(y)
+    return cv2.cvtColor(cv2.merge([y, cr, cb]), cv2.COLOR_YCrCb2BGR)
 
-    if method == "clahe":
-        lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        l = clahe.apply(l)
-        return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+def _prep_sharpen(img):
+    kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]], dtype=np.float32)
+    return cv2.filter2D(img, -1, kernel)
 
-    if method == "histeq":
-        ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
-        y, cr, cb = cv2.split(ycrcb)
-        y = cv2.equalizeHist(y)
-        return cv2.cvtColor(cv2.merge([y, cr, cb]), cv2.COLOR_YCrCb2BGR)
+def _prep_denoise(img):
+    return cv2.fastNlMeansDenoisingColored(img, None, h=10, hColor=10,
+                                           templateWindowSize=7, searchWindowSize=21)
 
-    if method == "sharpen":
-        kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]], dtype=np.float32)
-        return cv2.filter2D(img_bgr, -1, kernel)
+def _prep_bilateral(img):
+    return cv2.bilateralFilter(img, d=9, sigmaColor=75, sigmaSpace=75)
 
-    if method == "denoise":
-        return cv2.fastNlMeansDenoisingColored(img_bgr, None, h=10, hColor=10,
-                                                templateWindowSize=7, searchWindowSize=21)
-
-    if method == "bilateral":
-        return cv2.bilateralFilter(img_bgr, d=9, sigmaColor=75, sigmaSpace=75)
-
-    if method == "gamma":
-        gamma = 1.5
-        lut = np.array([((i / 255.0) ** gamma) * 255 for i in range(256)], dtype=np.uint8)
-        return cv2.LUT(img_bgr, lut)
-
-    return img_bgr
+def _prep_gamma(img, gamma=1.5):
+    lut = np.array([((i / 255.0) ** gamma) * 255 for i in range(256)], dtype=np.uint8)
+    return cv2.LUT(img, lut)
 
 
-PREPROCESS_OPTIONS = ["none", "clahe", "histeq", "sharpen", "denoise", "gamma", "bilateral"]
-PREPROCESS_LABELS = {
-    "none": "无  |  None",
-    "clahe": "CLAHE 自适应直方图",
-    "histeq": "直方图均衡化",
-    "sharpen": "锐化  |  Sharpen",
-    "denoise": "降噪  |  Denoise",
-    "gamma": "Gamma 校正",
-    "bilateral": "双边滤波  |  Bilateral",
+# key → (UI标签, 处理函数) — 单一数据源，UI 与逻辑通过此字典保持同步
+PREPROCESS_MAP = {
+    "none":      ("无  |  None",           _prep_none),
+    "clahe":     ("CLAHE 自适应直方图",      _prep_clahe),
+    "histeq":    ("直方图均衡化",            _prep_histeq),
+    "sharpen":   ("锐化  |  Sharpen",      _prep_sharpen),
+    "denoise":   ("降噪  |  Denoise",      _prep_denoise),
+    "gamma":     ("Gamma 校正",            _prep_gamma),
+    "bilateral": ("双边滤波  |  Bilateral", _prep_bilateral),
 }
+
+
+def apply_preprocess(img_bgr: np.ndarray, method: str) -> np.ndarray:
+    """通过预处理映射表分发，不再使用 if/elif 硬编码。
+
+    所有对比度增强方法仅操作亮度通道（LAB-L 或 YCrCb-Y），
+    避免灰度转换导致的色度信息丢失和训练/推理域差异。
+    """
+    entry = PREPROCESS_MAP.get(method)
+    if entry is None:
+        return img_bgr
+    return entry[1](img_bgr)
 
 
 # ===========================================================================
@@ -832,6 +834,24 @@ class DragDropListWidget(QListWidget):
 class MainWindow(QMainWindow):
     """Main GUI matching paper Fig 5.5 layout."""
 
+    # 部署后 PyInstaller 把数据文件放在 _internal/ 下，通过 sys._MEIPASS 定位
+    @staticmethod
+    def _bundle_dir() -> Path:
+        if getattr(sys, "frozen", False):
+            return Path(sys._MEIPASS)
+        return Path(__file__).resolve().parent
+
+    @classmethod
+    def _resolve_candidate(cls, rel: str) -> Path:
+        """优先在 bundle 内查找，其次搜索运行目录下类似路径。"""
+        bundled = cls._bundle_dir() / rel
+        if bundled.exists():
+            return bundled
+        cwd = Path.cwd() / rel
+        if cwd.exists():
+            return cwd
+        return bundled  # 返回 bundle 版本，后续检查时会报明确错误
+
     DEFAULT_MODEL_CANDIDATES = [
         "weights/best.pt",
         "weights/last.pt",
@@ -875,9 +895,9 @@ class MainWindow(QMainWindow):
     # UI Construction
     # =========================================================================
     def _init_ui(self):
-        self.setWindowTitle("太阳能电池板缺陷检测系统 — Solar Panel Defect Detection")
-        self.setMinimumSize(900, 550)
-        self.resize(1280, 800)
+        self.setWindowTitle("solar-defect-detector")
+        self.setMinimumSize(900, 600)
+        self.resize(1400, 880)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -1124,17 +1144,21 @@ class MainWindow(QMainWindow):
             "QComboBox::drop-down { border: none; }"
             "QComboBox QAbstractItemView { background: #2b2b2b; color: #ccc; }")
         self.combo_camera.currentIndexChanged.connect(self._on_camera_changed)
-        self._scan_cameras()
+        # 阻断信号，避免 addItem 触发 _on_camera_changed 时
+        # self.status_bar 尚未创建导致 AttributeError 闪退
+        self.combo_camera.blockSignals(True)
+        self.combo_camera.addItem("点击检测后自动扫描  |  Auto-scan on detect", -1)
+        self.combo_camera.blockSignals(False)
         cam_layout.addWidget(self.combo_camera)
         layout.addWidget(cam_grp)
 
-        # Preprocessing
+        # 预处理选项 — 从 PREPROCESS_MAP 动态构建，确保 UI 标签与处理函数同步
         prep_grp = QGroupBox("图像预处理  |  Preprocess")
         prep_grp.setFont(self._group_font())
         prep_layout = QVBoxLayout(prep_grp)
         self.combo_preprocess = QComboBox()
-        for key in PREPROCESS_OPTIONS:
-            self.combo_preprocess.addItem(PREPROCESS_LABELS[key], key)
+        for key, (label, _func) in PREPROCESS_MAP.items():
+            self.combo_preprocess.addItem(label, key)
         self.combo_preprocess.setStyleSheet(
             "QComboBox { font-size: 13px; padding: 4px; background: #2b2b2b; "
             "color: #ccc; border: 1px solid #444; border-radius: 3px; }"
@@ -1230,58 +1254,72 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         row.setSpacing(8)
 
-        self.btn_open = QPushButton("选择文件  |  Select File")
+        self.btn_open = QPushButton("选择文件")
+        self.btn_open.setToolTip("Select File")
         self.btn_open.setMinimumHeight(44)
         self.btn_open.setFont(self._btn_font())
         self.btn_open.setStyleSheet(self._btn_style("#4A90E2", "#5BA0F2"))
         self.btn_open.clicked.connect(self._on_open_image)
+        self.btn_open.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         row.addWidget(self.btn_open)
 
-        self.btn_load = QPushButton("加载模型  |  Load Model")
+        self.btn_load = QPushButton("加载模型")
+        self.btn_load.setToolTip("Load Model")
         self.btn_load.setMinimumHeight(44)
         self.btn_load.setFont(self._btn_font())
         self.btn_load.setStyleSheet(self._btn_style("#4A90E2", "#5BA0F2"))
         self.btn_load.clicked.connect(self._on_load_model)
+        self.btn_load.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         row.addWidget(self.btn_load)
 
-        self.btn_detect = QPushButton("开始检测  |  Start")
+        self.btn_detect = QPushButton("开始检测")
+        self.btn_detect.setToolTip("Start Detection")
         self.btn_detect.setMinimumHeight(44)
         self.btn_detect.setFont(self._btn_font())
         self.btn_detect.setEnabled(False)
         self.btn_detect.setStyleSheet(self._btn_style("#27AE60", "#2ECC71"))
         self.btn_detect.clicked.connect(self._on_detect)
+        self.btn_detect.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         row.addWidget(self.btn_detect)
 
         # Stop button (paper: §5.4 停止检测)
-        self.btn_stop = QPushButton("停止检测  |  Stop")
+        self.btn_stop = QPushButton("停止检测")
+        self.btn_stop.setToolTip("Stop Detection")
         self.btn_stop.setMinimumHeight(44)
         self.btn_stop.setFont(self._btn_font())
         self.btn_stop.setEnabled(False)
         self.btn_stop.setStyleSheet(self._btn_style("#E74C3C", "#F06050"))
         self.btn_stop.clicked.connect(self._on_stop)
+        self.btn_stop.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         row.addWidget(self.btn_stop)
 
-        self.btn_save = QPushButton("保存结果  |  Save")
+        self.btn_save = QPushButton("保存结果")
+        self.btn_save.setToolTip("Save Result")
         self.btn_save.setMinimumHeight(44)
         self.btn_save.setFont(self._btn_font())
         self.btn_save.setEnabled(False)
         self.btn_save.setStyleSheet(self._btn_style("#F39C12", "#F5B041"))
         self.btn_save.clicked.connect(self._on_save_result)
+        self.btn_save.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         row.addWidget(self.btn_save)
 
-        self.btn_export = QPushButton("导出报告  |  Report")
+        self.btn_export = QPushButton("导出报告")
+        self.btn_export.setToolTip("Export Report")
         self.btn_export.setMinimumHeight(44)
         self.btn_export.setFont(self._btn_font())
         self.btn_export.setEnabled(False)
         self.btn_export.setStyleSheet(self._btn_style("#F39C12", "#F5B041"))
         self.btn_export.clicked.connect(self._on_export_report)
+        self.btn_export.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         row.addWidget(self.btn_export)
 
-        self.btn_batch = QPushButton("批量检测  |  Batch")
+        self.btn_batch = QPushButton("批量检测")
+        self.btn_batch.setToolTip("Batch Detection")
         self.btn_batch.setMinimumHeight(44)
         self.btn_batch.setFont(self._btn_font())
         self.btn_batch.setStyleSheet(self._btn_style("#8E44AD", "#A569BD"))
         self.btn_batch.clicked.connect(self._on_batch_detect)
+        self.btn_batch.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         row.addWidget(self.btn_batch)
 
         row.addStretch()
@@ -1312,14 +1350,14 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _btn_font():
         f = QFont()
-        f.setPointSize(11)
+        f.setPointSize(9)
         f.setBold(True)
         return f
 
     @staticmethod
     def _btn_style(bg, hover):
         return (
-            f"QPushButton {{ font-size: 15px; font-weight: bold; padding: 8px 16px; "
+            f"QPushButton {{ font-weight: bold; padding: 4px 8px; "
             f"background-color: {bg}; color: #fff; border: 1px solid {hover}; "
             f"border-radius: 6px; }}"
             f"QPushButton:hover {{ background-color: {hover}; }}"
@@ -1330,8 +1368,9 @@ class MainWindow(QMainWindow):
     # Mode switching (paper: 图片检测/视频检测/摄像头检测)
     # =========================================================================
     def _scan_cameras(self):
-        """Detect available camera indices 0..7 and populate the combo box.
-        Tries DirectShow first, falls back to MSMF and default backend.
+        """懒加载扫描可用摄像头索引 0..7，填充下拉框。
+        仅在用户进入摄像头模式时调用，不在启动时触发。
+        依次尝试 DirectShow → MSMF → 默认后端，单个设备失败不影响整体扫描。
         """
         current = self.combo_camera.currentData() if self.combo_camera.count() > 0 else None
         self.combo_camera.blockSignals(True)
@@ -1347,28 +1386,31 @@ class MainWindow(QMainWindow):
         for idx in range(8):
             opened = False
             for name, api in backends:
-                cap = cv2.VideoCapture(idx + api)
-                if cap.isOpened():
-                    # Verify the camera actually returns frames
-                    ret, frame = cap.read()
-                    cap.release()
-                    if ret and frame is not None and frame.size > 0:
-                        # Black-frame guard: skip cameras that only produce black frames
-                        if frame.max() < 20:
-                            continue
-                        label = f"Camera {idx} ({name})" if name != "ANY" else f"Camera {idx}"
-                        if idx not in seen:
-                            self.combo_camera.addItem(label, idx)
-                            seen.add(idx)
-                        opened = True
-                        break
-                cap.release()
+                cap = None
+                try:
+                    cap = cv2.VideoCapture(idx + api)
+                    if cap.isOpened():
+                        ret, frame = cap.read()
+                        if ret and frame is not None and frame.size > 0:
+                            if frame.max() < 20:  # 黑帧过滤
+                                continue
+                            label = f"Camera {idx} ({name})" if name != "ANY" else f"Camera {idx}"
+                            if idx not in seen:
+                                self.combo_camera.addItem(label, idx)
+                                seen.add(idx)
+                            opened = True
+                            break
+                except Exception:
+                    pass  # 单个摄像头异常不影响后续扫描
+                finally:
+                    if cap is not None:
+                        cap.release()
 
-            if idx - len(seen) >= 3:
+            if idx - len(seen) >= 3:  # 连续 3 个索引无设备则停止
                 break
 
         self.combo_camera.blockSignals(False)
-        # Restore previous selection if still valid
+        # 恢复之前选中的设备
         for i in range(self.combo_camera.count()):
             if self.combo_camera.itemData(i) == current:
                 self.combo_camera.setCurrentIndex(i)
@@ -1488,20 +1530,27 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _scan_all_best_pt():
         candidates = []
+        # 部署后不存在 runs/ 目录，仅源码运行时扫描
         base = Path("runs")
-        if not base.exists():
-            return candidates
-        for pt_file in base.rglob("**/weights/best.pt"):
-            stat = pt_file.stat()
-            if stat.st_size > 0:
-                candidates.append((pt_file.resolve(), stat.st_mtime, stat.st_size))
+        if base.exists():
+            for pt_file in base.rglob("**/weights/best.pt"):
+                stat = pt_file.stat()
+                if stat.st_size > 0:
+                    candidates.append((pt_file.resolve(), stat.st_mtime, stat.st_size))
+        # 也扫描 bundle 内的 weights/
+        bundle_weights = MainWindow._bundle_dir() / "weights"
+        if bundle_weights.is_dir():
+            for pt_file in bundle_weights.glob("*.pt"):
+                stat = pt_file.stat()
+                if stat.st_size > 0:
+                    candidates.append((pt_file.resolve(), stat.st_mtime, stat.st_size))
         candidates.sort(key=lambda x: x[1], reverse=True)
         return candidates
 
     def _try_auto_load_model(self):
         candidates = self._scan_all_best_pt()
         for rel in self.DEFAULT_MODEL_CANDIDATES:
-            p = Path(rel).resolve()
+            p = self._resolve_candidate(rel)
             if p.exists() and p.stat().st_size > 0:
                 if not any(p == c[0] for c in candidates):
                     candidates.insert(0, (p, p.stat().st_mtime, p.stat().st_size))
@@ -1976,16 +2025,20 @@ class MainWindow(QMainWindow):
             self._update_ui_state()
 
     def _on_load_model(self):
-        # Smart default directory: current model → weights/ → runs/ → cwd
+        # Smart default directory: current model → bundle weights/ → local weights/ → runs/ → cwd
         default_dir = ""
         if self.detector.model_path:
             default_dir = str(Path(self.detector.model_path).parent)
-        elif Path("weights").is_dir():
-            default_dir = "weights"
-        elif Path("runs").is_dir():
-            default_dir = "runs"
         else:
-            default_dir = "."
+            bundled_weights = self._bundle_dir() / "weights"
+            if bundled_weights.is_dir():
+                default_dir = str(bundled_weights)
+            elif Path("weights").is_dir():
+                default_dir = "weights"
+            elif Path("runs").is_dir():
+                default_dir = "runs"
+            else:
+                default_dir = "."
         path, _ = QFileDialog.getOpenFileName(
             self, "选择模型文件",
             default_dir,
@@ -2037,16 +2090,35 @@ class MainWindow(QMainWindow):
             self.video_worker.start()
 
         elif self._mode == "camera":
+            # 懒加载：首次进入摄像头模式才扫描设备
+            if self.combo_camera.count() == 0 or self.combo_camera.itemData(0) == -1:
+                self._scan_cameras()
             cam_id = (self.combo_camera.currentData()
                       if self.combo_camera.count() > 0 else 0)
-            self._set_ui_running(True)
-            self.status_bar.showMessage(f"正在检测摄像头 Camera {cam_id} …")
-            self.camera_worker = CameraWorker(self.detector, cam_id, prep)
-            self._running_worker = self.camera_worker
-            self.camera_worker.frame_ready.connect(self._on_camera_frame)
-            self.camera_worker.camera_opened.connect(self._on_camera_opened)
-            self.camera_worker.error_occurred.connect(self._on_error)
-            self.camera_worker.start()
+            if self.combo_camera.count() == 0 or cam_id == -1:
+                QMessageBox.warning(
+                    self, "摄像头未找到",
+                    "未检测到任何摄像头设备。\n\n"
+                    "可能原因:\n"
+                    "1. 未连接摄像头\n"
+                    "2. Windows 隐私设置禁止了摄像头访问\n"
+                    "   (设置 → 隐私 → 摄像头 → 允许应用访问摄像头)\n"
+                    "3. 摄像头驱动未安装")
+                return
+            try:
+                self._set_ui_running(True)
+                self.status_bar.showMessage(f"正在检测摄像头 Camera {cam_id} …")
+                self.camera_worker = CameraWorker(self.detector, cam_id, prep)
+                self._running_worker = self.camera_worker
+                self.camera_worker.frame_ready.connect(self._on_camera_frame)
+                self.camera_worker.camera_opened.connect(self._on_camera_opened)
+                self.camera_worker.error_occurred.connect(self._on_error)
+                self.camera_worker.start()
+            except Exception as e:
+                self._set_ui_running(False)
+                QMessageBox.critical(
+                    self, "摄像头启动失败",
+                    f"无法启动摄像头 Camera {cam_id}:\n{str(e)}")
 
     def _on_image_finished(self, original, annotated, counts, elapsed_ms, boxes_detail):
         if self.sender() is not self._running_worker:
@@ -2178,7 +2250,8 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         h = self.height()
-        sz = max(8, min(15, h // 55))
+        sz = max(7, min(11, h // 75))
+        btn_h = max(24, sz * 3 + 8)
         f = QFont()
         f.setPointSize(sz)
         f.setBold(True)
@@ -2186,6 +2259,7 @@ class MainWindow(QMainWindow):
                      self.btn_stop, self.btn_save, self.btn_export,
                      self.btn_batch]:
             btn.setFont(f)
+            btn.setMinimumHeight(btn_h)
 
 
 # ===========================================================================
